@@ -6,7 +6,8 @@
 ; the state of the amm: we have the amounts of the two tokens (x and y) and the number of liquidity tokens
 (struct amm (x y l) #:transparent)
 
-; NOTE we use 32-bit words by default
+(define w 4) ; bit width
+(define dw (* 2 w)) ; double the bit width
 
 ; adding liquidity
 ; we specify how much of token x to provide
@@ -21,7 +22,7 @@
     (delta (amm-x pool) delta-x (amm-y pool)))
   (define y-next
     (chain
-      (λ (r) (checked-add (bv 1 32) r))
+      (λ (r) (checked-add (bv 1 w) r))
       (chain
         (λ (dy) (checked-add (amm-y pool) dy))
         delta-y)))
@@ -42,32 +43,32 @@
     [else (amm (from-just! x-next) (from-just! y-next) (from-just! l-next))]))
 
 (define (delta ref-token-reserve ref-token-delta reserve)
-  ; we double the bitwidth to avoid overflows and check in the end that the result fits in 32 bits
+  ; we double the bitwidth to avoid overflows and check in the end that the result fits in word-width bits
   ; TODO could be a macro where we just give the field name
-  (define delta-64
-    (bvudiv ; 64 bits
+  (define delta-ext
+    (bvudiv ; (* 2 word-width) bits
       (bvmul
-        (zero-extend ref-token-delta (bitvector 64))
-        (zero-extend reserve (bitvector 64)))
-      (zero-extend ref-token-reserve (bitvector 64))))
+        (zero-extend ref-token-delta (bitvector dw))
+        (zero-extend reserve (bitvector dw)))
+      (zero-extend ref-token-reserve (bitvector dw))))
   (cond
-    [(bvugt ; can't fit in 32 bits
-       delta-64
-       (zero-extend (bv -1 32) (bitvector 64)))
+    [(bvugt ; can't fit in word-width bits
+       delta-ext
+       (zero-extend (bv -1 w) (bitvector dw)))
      nothing]
-    [else (just (extract 31 0 delta-64))]))
+    [else (just (extract (- w 1) 0 delta-ext))]))
 
 (module+ test
   (require rackunit)
   (test-case
     "add-liquidity"
     (define my-pool
-      (amm (bv 1 32) (bv 4 32) (bv 2 32)))
+      (amm (bv 1 w) (bv 4 w) (bv 2 w)))
     (check-equal?
-      (add-liquidity my-pool (bv 1 32))
-      (amm (bv #x00000002 32) (bv #x00000009 32) (bv #x00000004 32)))
+      (add-liquidity my-pool (bv 1 w))
+      (amm (bv 2 w) (bv 9 w) (bv 4 w)))
     (check-equal?
-      (add-liquidity my-pool (bv -1 32))
+      (add-liquidity my-pool (bv -1 w))
       my-pool)))
 
 (define (remove-liquidity pool delta-l)
@@ -99,33 +100,35 @@
   (test-case
     "remove-liquidity"
     (define my-pool
-      (amm (bv 1 32) (bv 4 32) (bv 2 32)))
+      (amm (bv 1 w) (bv 4 w) (bv 2 w)))
     (check-equal?
-      (remove-liquidity my-pool (bv 1 32))
-      (amm (bv #x00000001 32) (bv #x00000002 32) (bv 1 32)))
+      (remove-liquidity my-pool (bv 1 w))
+      (amm (bv 1 w) (bv 2 w) (bv 1 w)))
     (check-equal?
-      (remove-liquidity my-pool (bv -1 32))
+      (remove-liquidity my-pool (bv -1 w))
       my-pool)))
-
-; TODO introduce a bug (e.g. don't add 1 to y-next) and see if Rosette finds an example where we make free money; for that we need to model withdrawing liquidity.
 
 (module+ test
   (test-case
-    "monad operations on symolic data"
+    "trying to accumulate errors"
     (before
       (clear-vc!)
-      (define-symbolic x y l delta-x (bitvector 32))
       (check-false
         (sat?
           (verify
             (begin
+              (define-symbolic x y l delta-x-1 delta-x-2 (bitvector w))
               (define my-pool
                 (amm x y l))
-              (define my-pool-2
-                (add-liquidity my-pool delta-x))
+              (define dxs
+                (list delta-x-1 delta-x-2))
+              (define pool-2
+                ; we deposit twice; if we omit the +1 in the computation of y then the LP makes money for free.
+                (foldr (λ (d p) (add-liquidity p d)) my-pool dxs))
               (define delta-l
-                (bvsub (amm-l my-pool-2) (amm-l my-pool)))
-              (define my-pool-3
-                (remove-liquidity my-pool-2 delta-l))
-              (assert (bveq (amm-l my-pool-3) (amm-l my-pool))))))))))
+                (bvsub (amm-l pool-2) (amm-l my-pool)))
+              (define pool-3
+                (remove-liquidity pool-2 delta-l))
+              (assert
+                (bvuge (amm-y pool-3) (amm-y my-pool))))))))))
 
