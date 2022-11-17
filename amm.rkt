@@ -11,7 +11,7 @@
 
 ; adding liquidity
 ; we specify how much of token x to provide
-; however, to maintain a constay product x*y, we also need to provide y tokens; that amount is calculated as a function of delta-x and of the current state of the pool.
+; however, to maintain a constant product x*y, we also need to provide y tokens; that amount is calculated as a function of delta-x and of the current state of the pool.
 ; no fee is taken
 (define (add-liquidity pool delta-x)
   ; TODO monad notation
@@ -21,17 +21,16 @@
   (define delta-y
     (delta (amm-x pool) delta-x (amm-y pool)))
   (define y-next
-    (chain
-      (λ (r) (checked-add (bv 1 w) r))
-      (chain
-        (λ (dy) (checked-add (amm-y pool) dy))
-        delta-y)))
+    (do
+      [dy <- delta-y]
+      [y+dy <- (checked-add (amm-y pool) dy)]
+      (checked-add (bv 1 w) y+dy)))
   (define delta-l
     (delta (amm-x pool) delta-x (amm-l pool)))
   (define l-next
-    (chain
-      (λ (delta-l) (checked-add (amm-l pool) delta-l))
-      delta-l))
+    (do
+      [dl <- delta-l]
+      (checked-add (amm-l pool) dl)))
   ; TODO next, map/m would be useful
   (cond
     [(or
@@ -77,15 +76,15 @@
   (define delta-x
     (delta (amm-l pool) delta-l (amm-x pool)))
   (define x-next
-    (chain
-      (λ (delta-x) (checked-sub (amm-x pool) delta-x))
-      delta-x))
+    (do
+      [dx <- delta-x]
+      (checked-sub (amm-x pool) dx)))
   (define delta-y
     (delta (amm-l pool) delta-l (amm-y pool)))
   (define y-next
-    (chain
-      (λ (delta-y) (checked-sub (amm-y pool) delta-y))
-      delta-y))
+    (do
+      [dy <- delta-y]
+      (checked-sub (amm-y pool) dy)))
   ; TODO next, map/m would be useful
   (cond
     [(or
@@ -131,4 +130,3 @@
                 (remove-liquidity pool-2 delta-l))
               (assert
                 (bvuge (amm-y pool-3) (amm-y my-pool))))))))))
-

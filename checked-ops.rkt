@@ -1,5 +1,8 @@
 #lang rosette
 
+; checked arithmetic on bitvectors using data/maybe and monads
+; tried to make it work with Rosette
+
 (require
   (only-in data/maybe
     just
@@ -11,16 +14,55 @@
   (only-in data/monad
      [chain monad:chain])
   (only-in data/applicative
-     pure))
+     pure)
+  (for-syntax racket/base
+                     racket/syntax
+                     syntax/parse))
 ; NOTE we can't use do because it expands to code that uses monad:chain
 ; see https://stackoverflow.com/questions/57937588/in-racket-can-i-redefine-the-form-if-and-have-other-derived-forms-automatical
 
 (provide
   (all-defined-out)
-  just
-  nothing)
+  just nothing)
 
-; first we lift data/maybe and data/monad operations
+; monad syntax (adapted from data/monad)
+
+(define-syntax (<- stx)
+  (raise-syntax-error '<- "cannot be used outside of a do block" stx))
+
+(begin-for-syntax
+  (define-syntax-class internal-definition
+    #:attributes [expansion]
+    #:description "internal definition"
+    [pattern form
+             #:with expansion
+             (local-expand #'form (list (generate-temporary #'form))
+                           (list #'define #'define-values #'define-syntax #'define-syntaxes))
+             #:when (internal-definition? #'expansion)])
+
+  (define internal-definition?
+    (syntax-parser
+      #:literals [begin define define-values define-syntax define-syntaxes]
+      [(begin form ...)
+       (ormap internal-definition? (attribute form))]
+      [({~or define define-values define-syntax define-syntaxes} . _) #t]
+      [_ #f])))
+
+(define-syntax do
+  (syntax-parser
+    #:literals [<-]
+    [(_ x:expr) #'x]
+    [(_ [var {~and arrow <-} mx:expr] . rest)
+     (with-disappeared-uses
+      (begin
+        (record-disappeared-uses (list #'arrow))
+        #'(chain (lambda (var) (do . rest)) mx)))]
+    [(_ def:internal-definition ...+ . rest)
+     #'(let () def.expansion ... (do . rest))]
+    [(_ mx:expr . rest)
+     #'(chain (λ (_) (do . rest)) mx)]))
+
+; we lift data/maybe and data/monad operations
 
 (define (just? x)
   (for/all ([x x])
@@ -111,8 +153,18 @@
   (test-case
     "monad operations"
     (check-equal?
+      (do
+        [x <- (pure 1)]
+        (+ 1 x))
+      2)
+    (check-equal?
       (chain (λ (x) (+ 1 x)) (pure 1))
        2)
+    (check-equal?
+      (do
+        [x <- nothing]
+        (+ 1 x))
+       nothing)
     (check-equal?
       (chain (λ (x) (+ 1 x)) nothing)
        nothing))
@@ -125,7 +177,9 @@
       (check-false
         (sat?
           (verify
-            (chain (λ (x) (bvadd (bv 1 32) x)) (if b (pure x) nothing)))))))
+            (do
+              [x <- (if b (pure x) nothing)]
+              (bvadd (bv 1 32) x)))))))
   (test-case
     "symbolic tests"
     (before
