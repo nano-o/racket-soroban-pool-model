@@ -43,7 +43,6 @@
 
 (define (delta ref-token-reserve ref-token-delta reserve)
   ; we double the bitwidth to avoid overflows and check in the end that the result fits in word-width bits
-  ; TODO could be a macro where we just give the field name
   (define delta-ext
     (bvudiv ; (* 2 word-width) bits
       (bvmul
@@ -122,7 +121,7 @@
               (define dxs
                 (list delta-x-1 delta-x-2))
               (define pool-2
-                ; we deposit twice; if we omit the +1 in the computation of y then the LP makes money for free.
+                ; we deposit more than once and then withdraw all our liquidity; if we omit the +1 in the computation of y then the LP makes money for free.
                 (foldr (λ (d p) (add-liquidity p d)) my-pool dxs))
               (define delta-l
                 (bvsub (amm-l pool-2) (amm-l my-pool)))
