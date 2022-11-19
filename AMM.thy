@@ -228,41 +228,57 @@ qed
 
 lemma l5:
   fixes p\<^sub>0 p p' \<Delta>x
-  assumes "inv p\<^sub>0 p" and "l p' \<ge> l p" and "l p \<ge> l p\<^sub>0" and "pool_nz p\<^sub>0" and "pool_nz p"
+  assumes "inv p\<^sub>0 p" and "l p' > l p\<^sub>0" and "pool_nz p\<^sub>0" and "pool_nz p"
     and "x p' / l p' = x p / l p" and "y p' / l p' = y p / l p"
   shows "inv p\<^sub>0 p'"
 proof -
+  have "l p > l p\<^sub>0"
+    using AMM.inv_def assms(1) by auto
   define p'' where "p'' \<equiv> remove_liquidity_spec p' (l p' - l p\<^sub>0)"
   have "x p\<^sub>0 / l p\<^sub>0 =  x p' / l p'"
-    by (metis assms(1) assms(3) assms(4) assms(5) assms(6) l4(1))
+    using \<open>l p\<^sub>0 < l p\<close> assms(1) assms(3) assms(4) assms(5) l4(1) by fastforce
   hence "x p\<^sub>0 = x p''" using l3 unfolding p''_def remove_liquidity_spec_def Let_def
-    by (metis assms(4) mult.commute pool_nz_def select_convs(1))
+    by (metis assms(3) mult.commute pool_nz_def select_convs(1))
   have "y p\<^sub>0 / l p\<^sub>0 =  y p' / l p'"
-    using assms(1) assms(3) assms(4) assms(5) assms(7) l4(2) by fastforce
+    using \<open>l p\<^sub>0 < l p\<close> assms(1) assms(3) assms(4) assms(6) l4(2) by fastforce
   hence "y p\<^sub>0 = y p''" using l3 unfolding p''_def remove_liquidity_spec_def Let_def
-    by (metis assms(4) mult.commute pool_nz_def select_convs(2))
+    by (metis assms(3) mult.commute pool_nz_def select_convs(2))
   show ?thesis
-    by (metis AMM.inv_def \<open>x p\<^sub>0 = x p''\<close> \<open>y p\<^sub>0 = y p''\<close> assms(1) assms(2) dual_order.strict_trans1 p''_def)
+    by (simp add: AMM.inv_def \<open>x p\<^sub>0 = x p''\<close> \<open>y p\<^sub>0 = y p''\<close> assms(2) p''_def)
 qed
 
 lemma inv_add_okay:
   fixes p\<^sub>0 p p' \<Delta>x
-  assumes "inv p\<^sub>0 p" and "0 < \<Delta>x" and "pool_nz p\<^sub>0" and "pool_nz p"
+  assumes "inv p\<^sub>0 p" and "0 \<le> \<Delta>x" and "pool_nz p\<^sub>0" and "pool_nz p"
   defines "p' \<equiv> add_liquidity_spec p \<Delta>x"
   shows "inv p\<^sub>0 p'"
 proof -
   have "x p' / l p' = x p / l p" and "y p' / l p' = y p / l p"
-     apply (metis add_liquidity_properties(14) assms(2) assms(4) p'_def pool_nz_def)
-    apply (metis add_liquidity_properties(15) assms(2) assms(4) p'_def pool_nz_def)
+    apply (metis add_diff_cancel add_liquidity_properties(14) add_liquidity_spec_def assms(2) assms(4) diff_zero div_0 linorder_not_le mult.commute mult.right_neutral nle_le p'_def pool_nz_def select_convs(1) select_convs(3))
+    apply (metis add.right_neutral add_liquidity_properties(15) add_liquidity_spec_def assms(2) assms(4) div_0 linorder_not_less mult.commute mult.right_neutral nle_le p'_def pool_nz_def select_convs(2) select_convs(3))
     done
   moreover
   have "l p' \<ge> l p"
-    using add_liquidity_properties(9) assms(2) assms(4) less_le_not_le p'_def pool_nz_def by blast
+    by (metis add.right_neutral add_liquidity_properties(9) add_liquidity_spec_def assms(2) assms(4) div_0 linorder_not_less mult_1 nle_le p'_def pool_nz_def select_convs(3))
   moreover
-  have "l p \<ge> l p\<^sub>0"
+  have "l p > l p\<^sub>0"
     using AMM.inv_def assms(1) less_le_not_le by blast
   ultimately show ?thesis using l5
-    using assms(1) assms(3) assms(4) by blast
+    by (metis assms(1) assms(3) assms(4) less_eq_real_def order_less_trans)
+qed
+
+lemma inv_rem_okay:
+  fixes p\<^sub>0 p p' \<Delta>l
+  defines "p' \<equiv> remove_liquidity_spec p \<Delta>l"
+  assumes "inv p\<^sub>0 p" and "0 \<le> \<Delta>l" and "pool_nz p\<^sub>0" and "pool_nz p" and "l p\<^sub>0 < l p'"
+  shows "inv p\<^sub>0 p'"
+proof -
+  have "x p' / l p' = x p / l p" and "y p' / l p' = y p / l p"
+     apply (smt (verit, best) assms(4) assms(6) nonzero_mult_divide_mult_cancel_left p'_def pool_nz_def remove_liquidity_spec_def select_convs(1) select_convs(3) zero_less_mult_iff)
+    apply (smt (verit) assms(4) assms(6) divide_divide_eq_left divide_eq_0_iff nonzero_mult_div_cancel_left p'_def pool_nz_def remove_liquidity_spec_def select_convs(2) select_convs(3))
+    done
+  thus?thesis using l5
+    using assms(2) assms(4) assms(5) assms(6) by blast
 qed
 
 end
