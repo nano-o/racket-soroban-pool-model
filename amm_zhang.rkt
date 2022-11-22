@@ -14,7 +14,6 @@
 ; however, to maintain a constant product x*y, we also need to provide y tokens; that amount is calculated as a function of delta-x and of the current state of the pool.
 ; no fee is taken
 (define (add-liquidity pool delta-x)
-  ; TODO monad notation
   ; token quantities in the pool must be non-zero
   (define x-next
     (checked-add (amm-x pool) delta-x))
