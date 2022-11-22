@@ -1,6 +1,8 @@
-theory AMM
+theory AMM_Zhang
   imports (*"Word_Lib.Machine_Word_64"*) HOL.Real
 begin
+
+text \<open>The AMM formalization of Zhang et al. (Runtime Verification)\<close>
 
 section "Pool state"
 
@@ -31,25 +33,25 @@ lemma add_liquidity_properties:
   \<comment> \<open>properties of add_liquidity\<close>
   fixes p \<Delta>x
   assumes "x p > 0" and "y p > 0" and "l p > 0"
-    and "\<Delta>x > 0"
+    and "\<Delta>x \<ge> 0"
   defines "p' \<equiv> add_liquidity_spec p \<Delta>x"
     and "p'' \<equiv> add_liquidity_code_spec p \<Delta>x"
-  shows "x p < x p'" and "x p' = x p''"
-    and "y p < y p'" and "y p' < y p''" and "y p'' \<le> y p' + 1"
-    and "l p' - 1 < l p''" and "l p'' \<le> l p'" and "l p \<le> l p''" and "l p < l p'"
-    and "k p < k p'" and "k p' < k p''"
+  shows "x p \<le> x p'" and "x p' = x p''"
+    and "y p \<le> y p'" and "y p' < y p''" and "y p'' \<le> y p' + 1"
+    and "l p' - 1 < l p''" and "l p'' \<le> l p'" and "l p \<le> l p''" and "l p \<le> l p'"
+    and "k p \<le> k p'" and "k p' < k p''"
     and "k p'/k p = (l p'/l p)\<^sup>2"
     and "(l p''/l p)\<^sup>2 < k p''/k p"
     and "x p / l p = x p' / l p'"
     and "y p / l p = y p' / l p'"
 proof -
-  show "x p < x p'"
-    by (metis add.commute add_liquidity_spec_def assms(1,4) div_self l1 less_add_same_cancel2 mult.comm_neutral order_less_irrefl p'_def select_convs(1) times_divide_eq_right)
+  show "x p \<le> x p'"
+    by (smt (verit) add_liquidity_spec_def assms(1) assms(4) divide_nonneg_pos eq_divide_imp ext_inject le_divide_eq_1 p'_def surjective)
   show "x p' = x p''"
     using assms(1-4) unfolding p'_def p''_def add_liquidity_spec_def add_liquidity_code_spec_def Let_def
     by (auto; metis add_divide_distrib eq_divide_eq_1 nonzero_eq_divide_eq order_less_irrefl)
-  show "y p < y p'"
-    by (simp add: add_liquidity_spec_def assms(1,2,4) l1 p'_def)
+  show "y p \<le> y p'"
+    by (smt (verit, del_insts) add_liquidity_spec_def assms(1) assms(2) assms(4) divide_nonneg_pos l1 p'_def select_convs(2) split_mult_pos_le)
   show "y p' < y p''"
     by (simp add: add_liquidity_code_spec_def add_liquidity_spec_def l1 p''_def p'_def)
   show "y p'' \<le> y p' + 1"
@@ -59,13 +61,13 @@ proof -
   show "l p'' \<le> l p'"
     by (simp add: add_liquidity_code_spec_def add_liquidity_spec_def l1 p''_def p'_def)
   show "l p \<le> l p''"
-    by (smt (z3) \<open>l p' - 1 < l p''\<close> add_liquidity_code_spec_def add_liquidity_spec_def assms(1) assms(3) assms(4) divide_less_eq_1_pos divide_pos_pos int_less_real_le nonzero_mult_div_cancel_right of_int_0 p''_def p'_def select_convs(3))
-  show "l p < l p'"
-    by (simp add: add_liquidity_spec_def assms(1) assms(3) assms(4) l1 p'_def)
-  show "k p < k p'"
-    by (simp add: \<open>x p < x p'\<close> \<open>y p < y p'\<close> assms(1,2) k_def less_eq_real_def mult_le_less_imp_less)
+    by (smt (verit) add_liquidity_code_spec_def assms(1) assms(3) assms(4) divide_nonneg_pos of_int_0_le_iff p''_def select_convs(3) split_mult_pos_le zero_le_floor)
+  show "l p \<le> l p'"
+    using \<open>l p \<le> l p''\<close> \<open>l p'' \<le> l p'\<close> by force
+  show "k p \<le> k p'"
+    by (smt (verit, ccfv_SIG) \<open>x p \<le> x p'\<close> \<open>y p \<le> y p'\<close> add_liquidity_spec_def assms(1) assms(2) k_def mult.left_commute mult_le_less_imp_less nonzero_mult_div_cancel_right p'_def select_convs(1) select_convs(2) times_divide_eq_right)
   show "k p' < k p''"
-    by (metis \<open>x p < x p'\<close> \<open>x p' = x p''\<close> \<open>y p' < y p''\<close> assms(1) dual_order.strict_trans k_def mult.commute mult_less_iff1) 
+    by (metis \<open>x p \<le> x p'\<close> \<open>x p' = x p''\<close> \<open>y p' < y p''\<close> assms(1) dual_order.strict_trans1 k_def mult_less_cancel_left_pos) 
   show "k p'/k p = (l p'/l p)\<^sup>2"
     using assms(1-4) unfolding p'_def add_liquidity_spec_def Let_def k_def
     by (simp; algebra)
@@ -81,15 +83,15 @@ proof -
     moreover
     have "(x p + \<Delta>x) * (y p + \<lfloor>\<Delta>x * y p / x p\<rfloor> + 1) / (x p * y p)
           > (x p + \<Delta>x) * (y p + \<Delta>x * y p / x p) / (x p * y p)"
-      by (smt (verit, ccfv_SIG) assms(1,2,4) less_divide_eq_1_pos linordered_comm_semiring_strict_class.comm_mult_strict_left_mono mult_less_cancel_right real_of_int_floor_add_one_gt times_divide_eq_left zero_less_mult_iff)
+      by (smt (verit) assms(1) assms(2) assms(4) divide_strict_right_mono less_floor_iff mult_pos_pos mult_strict_left_mono)
     ultimately
     show ?thesis
       by (smt (verit, best) \<open>k p' / k p = (l p' / l p)\<^sup>2\<close> \<open>k p' < k p''\<close> add_liquidity_code_spec_def add_liquidity_spec_def assms(1,2) divide_le_cancel k_def l1 p''_def p'_def select_convs(3) split_mult_pos_le)
   qed
   show "x p / l p = x p' / l p'"
-    by (smt (verit) add_liquidity_spec_def assms(1) assms(4) divide_divide_eq_left divide_pos_pos nonzero_mult_div_cancel_left p'_def select_convs(1) select_convs(3))
+    by (smt (verit, del_insts) \<open>x p \<le> x p'\<close> add_liquidity_spec_def assms(1) divide_pos_pos nonzero_eq_divide_eq nonzero_mult_divide_mult_cancel_left p'_def select_convs(1) select_convs(3))
   show "y p / l p = y p' / l p'"
-    by (smt (verit, ccfv_SIG) add_liquidity_spec_def assms(1) assms(4) divide_nonneg_nonneg mult_divide_mult_cancel_left_if p'_def select_convs(2) select_convs(3))
+    by (smt (verit, ccfv_threshold) \<open>y p \<le> y p'\<close> add_liquidity_spec_def assms(2) divide_eq_0_iff nonzero_eq_divide_eq nonzero_mult_divide_mult_cancel_left p'_def select_convs(2) select_convs(3))
 qed
 
 (*
@@ -134,36 +136,36 @@ lemma remove_liquidity_properties:
   \<comment> \<open>properties of remove_liquidity\<close>
   fixes p \<Delta>l
   assumes "x p > 0" and "y p > 0" and "l p > 0"
-    and "\<Delta>l < l p" and "0 < \<Delta>l"
+    and "\<Delta>l < l p" and "0 \<le> \<Delta>l"
   defines "p' \<equiv> remove_liquidity_spec p \<Delta>l"
     and "p'' \<equiv> remove_liquidity_code_spec p \<Delta>l"
-  shows "x p' < x p" and "x p' \<le> x p''"
-    and "y p' < y p" and "y p' \<le> y p''"
-    and "l p' = l p''" and "l p' < l p"
-    and "k p' \<le> k p''" and "k p' < k p"
+  shows "x p' \<le> x p" and "x p' \<le> x p''"
+    and "y p' \<le> y p" and "y p' \<le> y p''"
+    and "l p' = l p''" and "l p' \<le> l p"
+    and "k p' \<le> k p''" and "k p' \<le> k p"
     and "k p'/k p = (l p'/l p)\<^sup>2"
     and "(l p''/l p)\<^sup>2 \<le> k p''/k p"
     and "x p / l p = x p' / l p'"
     and "y p / l p = y p' / l p'"
 proof -
-  show "x p' < x p"
-    by (smt (verit, del_insts) assms(1) assms(3) assms(5) divide_pos_pos l2 mult_pos_pos p'_def pool_state_spec.select_convs(1) remove_liquidity_spec_def)
+  show "x p' \<le> x p"
+    by (smt (verit, del_insts) assms(1) assms(3) assms(5) divide_divide_eq_right divide_eq_0_iff divide_nonneg_pos l2 p'_def remove_liquidity_spec_def select_convs(1))
   show "x p' \<le> x p''"
     by (simp add: assms(7) l2 p'_def remove_liquidity_code_spec_def remove_liquidity_spec_def)
-  show "y p' < y p"
-    by (smt (verit, best) assms(2) assms(3) assms(5) divide_pos_pos l2 mult_pos_pos p'_def pool_state_spec.select_convs(2) remove_liquidity_spec_def)
+  show "y p' \<le> y p"
+    by (smt (verit, ccfv_SIG) assms(2) assms(3) assms(5) divide_nonneg_pos l2 p'_def remove_liquidity_spec_def select_convs(2) split_mult_pos_le)
   show "y p' \<le> y p''"
     by (simp add: l2 p''_def p'_def remove_liquidity_code_spec_def remove_liquidity_spec_def)
   show "l p' = l p''"
     by (metis assms(3) l2 nonzero_mult_div_cancel_right not_less_iff_gr_or_eq p''_def p'_def pool_state_spec.select_convs(3) remove_liquidity_code_spec_def remove_liquidity_spec_def)
-  show "l p' < l p"
+  show "l p' \<le> l p"
     by (simp add: \<open>l p' = l p''\<close> assms(5) p''_def remove_liquidity_code_spec_def)
-  show "k p' < k p"
-    by (smt (verit) \<open>x p' < x p\<close> \<open>y p' < y p\<close> assms(1) assms(2) assms(3) assms(4) divide_less_eq_1_pos k_def mult_le_less_imp_less p'_def pool_state_spec.select_convs(2) remove_liquidity_spec_def zero_less_mult_iff)
+  show "k p' \<le> k p"
+    by (smt (verit) \<open>x p' \<le> x p\<close> \<open>y p' \<le> y p\<close> assms(1) assms(2) assms(3) assms(4) divide_less_eq_1_pos k_def mult_less_cancel_left_pos mult_less_iff1 mult_pos_pos p'_def remove_liquidity_spec_def select_convs(2))
   show "k p' \<le> k p''"
     by (smt (verit) \<open>x p' \<le> x p''\<close> \<open>y p' \<le> y p''\<close> assms(1) assms(2) assms(3) assms(4) divide_less_eq_1_pos k_def mult.commute mult_less_cancel_left_pos mult_pos_pos p'_def pool_state_spec.select_convs(1) pool_state_spec.select_convs(2) remove_liquidity_spec_def)
   show "k p'/k p = (l p'/l p)\<^sup>2"
-    by (smt (verit, best) \<open>x p' < x p\<close> \<open>y p' < y p\<close> assms(3) k_def mult_cancel_right2 mult_divide_mult_cancel_left_if nonzero_eq_divide_eq nonzero_mult_div_cancel_left p'_def power2_eq_square remove_liquidity_spec_def select_convs(1) select_convs(2) select_convs(3) times_divide_eq_left)
+    by (smt (verit, ccfv_SIG) ab_semigroup_mult_class.mult_ac(1) assms(1) assms(2) assms(3) k_def mult.left_commute mult_pos_pos nonzero_eq_divide_eq p'_def power2_eq_square remove_liquidity_spec_def select_convs(1) select_convs(2) select_convs(3))
   show "(l p''/l p)\<^sup>2 \<le> k p''/k p"
     by (metis \<open>k p' / k p = (l p' / l p)\<^sup>2\<close> \<open>k p' \<le> k p''\<close> \<open>l p' = l p''\<close> assms(1) assms(2) divide_right_mono k_def less_le_not_le split_mult_pos_le)
   show "x p / l p = x p' / l p'"
@@ -179,14 +181,16 @@ withdrawing all the liquidity obtained leaves the pool with at least the same am
 We could formalize executions as lists, inductive invariants, etc.\<close>
 
 definition inv where
-  "inv p\<^sub>0 p \<equiv> l p > l p\<^sub>0 \<and> (
+  "inv p\<^sub>0 p \<equiv> l p \<ge> l p\<^sub>0 \<and> (
     let p' = remove_liquidity_spec p (l p - l p\<^sub>0)
     in x p' = x p\<^sub>0 \<and> y p' = y p\<^sub>0)"
 
-definition pool_nz where
-  "pool_nz p \<equiv> x p > 0 \<and> y p > 0 \<and> l p > 0"
+definition pool_ne where
+  \<comment> \<open>non-empty pool\<close>
+  "pool_ne p \<equiv> x p > 0 \<and> y p > 0 \<and> l p > 0"
 
 lemma l3:
+  \<comment> \<open>if the ratio x:l is the same as x':l', then removing liquidity l'-l results in balance x.\<close>
   fixes x l x' l' :: real
   assumes "x/l = x'/l'" and "l>0" and "x>0"
   shows "x'*(1-(l'-l)/l') = x"
@@ -194,41 +198,40 @@ lemma l3:
 
 lemma l4:
   fixes p\<^sub>0 p
-  assumes "inv p\<^sub>0 p" and "pool_nz p\<^sub>0" and "pool_nz p" and "l p \<ge> l p\<^sub>0"
+  assumes "inv p\<^sub>0 p" and "pool_ne p\<^sub>0" and "pool_ne p"
   shows "x p / l p = x p\<^sub>0 / l p\<^sub>0" and "y p / l p = y p\<^sub>0 / l p\<^sub>0"
 proof -
-  define p' where "p' \<equiv> remove_liquidity_spec p (l p - l p\<^sub>0)"
+  define \<Delta>l where "\<Delta>l \<equiv> l p - l p\<^sub>0"
+  define p' where "p' \<equiv> remove_liquidity_spec p \<Delta>l"
   have 1:"l p\<^sub>0 = l p'"
   proof -
     have "(1 - (x' - x)/x')*x' = x" if "x' \<noteq> 0" for x x' :: real
       by (simp add: diff_divide_distrib that)
     thus ?thesis
       unfolding p'_def remove_liquidity_spec_def Let_def
-      by (metis assms(3) order_less_irrefl pool_nz_def select_convs(3))
+      by (metis \<Delta>l_def assms(3) order_less_irrefl pool_ne_def select_convs(3))
   qed
-  have 2:"l p - l p\<^sub>0 > 0"
-    using AMM.inv_def assms(1) diff_gt_0_iff_gt by blast
-  have 3:"l p - l p\<^sub>0 < l p"
-    using assms(2) pool_nz_def by fastforce
+  have 2:"\<Delta>l > 0"
+    using AMM.inv_def assms(1) diff_ge_0_iff_ge \<Delta>l_def 
+  have 3:"\<Delta>l < l p"
+    using assms(2) pool_ne_def \<Delta>l_def by fastforce
   show "x p / l p = x p\<^sub>0 / l p\<^sub>0"
   proof -
     have "x p / l p = x p' / l p'"
-      using "2" "3" assms(3) p'_def pool_nz_def remove_liquidity_properties(11) by blast
+      using "2" "3" assms(3) p'_def pool_ne_def remove_liquidity_properties(11) by blast
     thus ?thesis using 1
-      by (metis AMM.inv_def assms(1) p'_def)
   qed
   show "y p / l p = y p\<^sub>0 / l p\<^sub>0"
   proof -
     have "y p / l p = y p' / l p'"
-      using "2" "3" assms(3) p'_def pool_nz_def remove_liquidity_properties(12) by blast
+      using "2" "3" assms(3) p'_def pool_ne_def remove_liquidity_properties(12) by blast
     thus ?thesis using 1
-      by (metis AMM.inv_def assms(1) p'_def)
   qed
 qed
 
 lemma l5:
   fixes p\<^sub>0 p p' \<Delta>x
-  assumes "inv p\<^sub>0 p" and "l p' > l p\<^sub>0" and "pool_nz p\<^sub>0" and "pool_nz p"
+  assumes "inv p\<^sub>0 p" and "l p' > l p\<^sub>0" and "pool_ne p\<^sub>0" and "pool_ne p"
     and "x p' / l p' = x p / l p" and "y p' / l p' = y p / l p"
   shows "inv p\<^sub>0 p'"
 proof -
@@ -238,28 +241,28 @@ proof -
   have "x p\<^sub>0 / l p\<^sub>0 =  x p' / l p'"
     using \<open>l p\<^sub>0 < l p\<close> assms(1) assms(3) assms(4) assms(5) l4(1) by fastforce
   hence "x p\<^sub>0 = x p''" using l3 unfolding p''_def remove_liquidity_spec_def Let_def
-    by (metis assms(3) mult.commute pool_nz_def select_convs(1))
+    by (metis assms(3) mult.commute pool_ne_def select_convs(1))
   have "y p\<^sub>0 / l p\<^sub>0 =  y p' / l p'"
     using \<open>l p\<^sub>0 < l p\<close> assms(1) assms(3) assms(4) assms(6) l4(2) by fastforce
   hence "y p\<^sub>0 = y p''" using l3 unfolding p''_def remove_liquidity_spec_def Let_def
-    by (metis assms(3) mult.commute pool_nz_def select_convs(2))
+    by (metis assms(3) mult.commute pool_ne_def select_convs(2))
   show ?thesis
     by (simp add: AMM.inv_def \<open>x p\<^sub>0 = x p''\<close> \<open>y p\<^sub>0 = y p''\<close> assms(2) p''_def)
 qed
 
 lemma inv_add_okay:
   fixes p\<^sub>0 p p' \<Delta>x
-  assumes "inv p\<^sub>0 p" and "0 \<le> \<Delta>x" and "pool_nz p\<^sub>0" and "pool_nz p"
+  assumes "inv p\<^sub>0 p" and "0 \<le> \<Delta>x" and "pool_ne p\<^sub>0" and "pool_ne p"
   defines "p' \<equiv> add_liquidity_spec p \<Delta>x"
   shows "inv p\<^sub>0 p'"
 proof -
   have "x p' / l p' = x p / l p" and "y p' / l p' = y p / l p"
-    apply (metis add_diff_cancel add_liquidity_properties(14) add_liquidity_spec_def assms(2) assms(4) diff_zero div_0 linorder_not_le mult.commute mult.right_neutral nle_le p'_def pool_nz_def select_convs(1) select_convs(3))
-    apply (metis add.right_neutral add_liquidity_properties(15) add_liquidity_spec_def assms(2) assms(4) div_0 linorder_not_less mult.commute mult.right_neutral nle_le p'_def pool_nz_def select_convs(2) select_convs(3))
+    apply (metis add_diff_cancel add_liquidity_properties(14) add_liquidity_spec_def assms(2) assms(4) diff_zero div_0 linorder_not_le mult.commute mult.right_neutral nle_le p'_def pool_ne_def select_convs(1) select_convs(3))
+    apply (metis add.right_neutral add_liquidity_properties(15) add_liquidity_spec_def assms(2) assms(4) div_0 linorder_not_less mult.commute mult.right_neutral nle_le p'_def pool_ne_def select_convs(2) select_convs(3))
     done
   moreover
   have "l p' \<ge> l p"
-    by (metis add.right_neutral add_liquidity_properties(9) add_liquidity_spec_def assms(2) assms(4) div_0 linorder_not_less mult_1 nle_le p'_def pool_nz_def select_convs(3))
+    by (metis add.right_neutral add_liquidity_properties(9) add_liquidity_spec_def assms(2) assms(4) div_0 linorder_not_less mult_1 nle_le p'_def pool_ne_def select_convs(3))
   moreover
   have "l p > l p\<^sub>0"
     using AMM.inv_def assms(1) less_le_not_le by blast
@@ -270,12 +273,12 @@ qed
 lemma inv_rem_okay:
   fixes p\<^sub>0 p p' \<Delta>l
   defines "p' \<equiv> remove_liquidity_spec p \<Delta>l"
-  assumes "inv p\<^sub>0 p" and "0 \<le> \<Delta>l" and "pool_nz p\<^sub>0" and "pool_nz p" and "l p\<^sub>0 < l p'"
+  assumes "inv p\<^sub>0 p" and "0 \<le> \<Delta>l" and "pool_ne p\<^sub>0" and "pool_ne p" and "l p\<^sub>0 < l p'"
   shows "inv p\<^sub>0 p'"
 proof -
   have "x p' / l p' = x p / l p" and "y p' / l p' = y p / l p"
-     apply (smt (verit, best) assms(4) assms(6) nonzero_mult_divide_mult_cancel_left p'_def pool_nz_def remove_liquidity_spec_def select_convs(1) select_convs(3) zero_less_mult_iff)
-    apply (smt (verit) assms(4) assms(6) divide_divide_eq_left divide_eq_0_iff nonzero_mult_div_cancel_left p'_def pool_nz_def remove_liquidity_spec_def select_convs(2) select_convs(3))
+     apply (smt (verit, best) assms(4) assms(6) nonzero_mult_divide_mult_cancel_left p'_def pool_ne_def remove_liquidity_spec_def select_convs(1) select_convs(3) zero_less_mult_iff)
+    apply (smt (verit) assms(4) assms(6) divide_divide_eq_left divide_eq_0_iff nonzero_mult_div_cancel_left p'_def pool_ne_def remove_liquidity_spec_def select_convs(2) select_convs(3))
     done
   thus?thesis using l5
     using assms(2) assms(4) assms(5) assms(6) by blast
