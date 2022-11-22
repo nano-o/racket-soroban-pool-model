@@ -3,6 +3,8 @@
 (require
   "checked-ops.rkt")
 
+; an AMM as in Zhang et al. (Runtime Verification)
+
 ; the state of the amm: we have the amounts of the two tokens (x and y) and the number of liquidity tokens
 (struct amm (x y l) #:transparent)
 
