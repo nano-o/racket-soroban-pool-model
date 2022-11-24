@@ -110,16 +110,17 @@
       (withdraw my-pool (bv -1 w))
       nothing)))
 
+(define (add-liquidity* f p xys)
+  ; f is the add-liquidity function
+  (foldl
+    (λ (xy maybe-p)
+       (do
+         [p <- maybe-p]
+         (f p (car xy) (cdr xy))))
+    (just p) ; init
+    xys))
+
 (module+ test
-  (define (add-liquidity* f p xys)
-    ; f is the add-liquidity function
-    (foldl
-      (λ (xy maybe-p)
-         (do
-           [p <- maybe-p]
-           (f p (car xy) (cdr xy))))
-      (just p) ; init
-      xys))
   (define (add-liquidity*-then-remove f p xys)
     (define maybe-p-2
       (add-liquidity* f p xys)) ; list
@@ -134,10 +135,10 @@
       (amm (bv 1 w) (bv 4 w) (bv 2 w)))
     (check-equal?
       (add-liquidity* add-liquidity my-pool (list (cons (bv 2 w) (bv 2 w)) (cons (bv 3 w) (bv 4 w))))
-      (just (amm (bv #x6 4) (bv #xa 4) (bv #x5 4))))
+      (just (amm (bv 6 w) (bv 10 w) (bv 5 w))))
     (check-equal?
       (add-liquidity*-then-remove add-liquidity my-pool (list (cons (bv 2 w) (bv 2 w)) (cons (bv 3 w) (bv 4 w))))
-      (just (amm (bv #x3 4) (bv #x4 4) (bv #x2 4)))))
+      (just (amm (bv 3 w) (bv 4 w) (bv 2 w)))))
 
   (define-symbolic x y l delta-x-1 delta-x-2 delta-y-1 delta-y-2 (bitvector w))
   (define my-pool
