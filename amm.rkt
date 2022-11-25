@@ -2,6 +2,7 @@
 ; #lang rosette
 #lang racket
 ; #lang errortrace racket
+(require racket/trace)
 
 (require
   (only-in rosette
@@ -24,7 +25,7 @@
   "checked-ops.rkt"
   struct-update)
 
-(define w 4) ; bit width
+(define w 8) ; bit width
 (define dw (* 2 w)) ; double the bit width
 
 ; State of the pool
@@ -43,14 +44,15 @@
 
 (define (burn t addr amount)
   (do
-    [new-amount <- (checked-sub ((token-balance t) addr) amount)]
+    [new-amount <- (trace-call 'checked-sub checked-sub ((token-balance t) addr) amount)]
     (just
-      (λ (a)
-         (cond
-           [(bveq a addr)
-            new-amount]
-           [else
-            ((token-balance t) a)])))))
+      (token
+        (λ (a)
+           (cond
+             [(bveq a addr)
+              new-amount]
+             [else
+               ((token-balance t) a)]))))))
 
 (define (mint t addr amount)
   (do
@@ -152,74 +154,74 @@
   (and
     (or
       (just? (total-supply ta addrs))
-      (begin0
-        #f
-        (displayln "total token-a supply overflow")))
+      (not (displayln "total token-a supply overflow")))
     (or
       (just? (total-supply tb addrs))
-      (begin0
-        #f
-        (displayln "total token-b supply overflow")))
-    (and
-      (or
-        (just? (total-supply ts addrs))
-        (begin0
-          #f
-          (displayln "total shares supply overflow")))
-      (or
-        (bveq
-          (pool-total-shares (state-pool s))
-          (from-just! (total-supply ts addrs)))
-        (begin0
-          #f
-          (displayln "total shares not equal to total supply"))))
+      (not (displayln "total token-b supply overflow")))
+    (or
+      (just? (total-supply ts addrs))
+      (not "total shares supply overflow"))
+    (or
+      (bveq
+        (pool-total-shares (state-pool s))
+        (from-just! (total-supply ts addrs)))
+      (not (displayln "total shares not equal to total supply")))
     (or
       (bveq
         (pool-reserve-a (state-pool s))
         ((token-balance ta) (pool-addr (state-pool s))))
-      (begin0
-        #f
-        (displayln "reserve of token a not equal to balance")))
+      (not (displayln "reserve of token a not equal to balance")))
     (or
       (bveq
         (pool-reserve-b (state-pool s))
         ((token-balance tb) (pool-addr (state-pool s))))
-      (begin0
-        #f
-        (displayln "reserve of token b not equal to balance")))))
+      (not (displayln "reserve of token b not equal to balance")))))
 
-  ; (define my-pool-addr
-    ; (bv 0 w))
-  ; (define user1-addr
-    ; (bv 1 w))
-  ; (define user2-addr
-    ; (bv 2 w))
-  ; (define s0
-    ; (state/kw
-      ; #:pool
-      ; (pool/kw
-        ; #:addr my-pool-addr
-        ; #:reserve-a (bv 2 w)
-        ; #:reserve-b (bv 4 w)
-        ; #:total-shares (bv 2 w))
-      ; ; user1 has 100 of each token a and b
-      ; #:token-a
-      ; (token
-        ; (λ (addr)
-           ; (cond
-             ; [(equal? addr user1-addr) (bv 100 w)]
-             ; [(equal? addr my-pool-addr) (bv 2 w)]
-             ; [else (bv 0 w)])))
-      ; #:token-b
-      ; (token
-        ; (λ (addr)
-           ; (cond
-             ; [(equal? addr user1-addr) (bv 100 w)]
-             ; [(equal? addr my-pool-addr) (bv 4 w)]
-             ; [else (bv 0 w)])))
-      ; ; existing liquidity is owned by user2
-      ; #:token-s (token (λ (addr) (if (equal? addr user2-addr) (bv 2 w) (bv 0 w))))))
-  ; (define addrs (list my-pool-addr user1-addr user2-addr))
+(define (withdraw s to)
+  (define p (state-pool s))
+  (define ta (state-ta s))
+  (define tb (state-tb s))
+  (define ts (state-ts s))
+  (define addr
+    (pool-addr p))
+  (define balance-a
+    ((token-balance ta) addr))
+  (define balance-b
+    ((token-balance tb) addr))
+  (define balance-shares
+    ((token-balance ts) addr))
+  (define out-a
+    (trace-call 'xy/z xy/z balance-a balance-shares (pool-total-shares p)))
+  (define out-b
+    (trace-call 'xy/z xy/z balance-b balance-shares (pool-total-shares p)))
+  (define new-total-shares
+    (bvsub (pool-total-shares p) balance-shares)) ; NOTE no need for checked-sub here
+  (define new-ts
+    (trace-call 'burn burn ts addr balance-shares))
+  (define new-ta
+    (do
+      [out-a <- out-a]
+      (trace-call 'transfer transfer ta addr to out-a)))
+  (define new-tb
+    (do
+      [out-b <- out-b]
+      (trace-call 'transfer transfer tb addr to out-b)))
+  (define new-pool
+    (do
+      [out-a <- out-a]
+      [out-b <- out-b]
+      (just
+        (pool
+          addr
+          (bvsub balance-a out-a) ; NOTE no need for checked sub
+          (bvsub balance-b out-b) ; NOTE no need for checked sub
+          new-total-shares))))
+  (do
+    [new-pool <- new-pool]
+    [new-ts <- new-ts]
+    [new-ta <- new-ta]
+    [new-tb <- new-tb]
+    (just (state new-pool new-ta new-tb new-ts))))
 
 (module+ test
   (require rackunit)
@@ -255,11 +257,12 @@
       ; existing liquidity is owned by user2
       #:token-s (token (λ (addr) (if (equal? addr user2-addr) (bv 2 w) (bv 0 w))))))
   (define addrs (list my-pool-addr user1-addr user2-addr))
+
   (test-case
     "pool invariant test"
     (check-true (pool-invariant s0 addrs)))
-  (test-case
-    "deposit test"
+
+  (define s3
     (do
       ; the user first transfers tokens to the pool
       [ta1 <- (transfer (state-ta s0) user1-addr my-pool-addr (bv 2 w))]
@@ -267,9 +270,15 @@
       [tb2 <- (transfer (state-tb s1) user1-addr my-pool-addr (bv 4 w))]
       (define s2 (state-tb-set s1 tb2))
       ; then we call deposit
-      [s3 <- (deposit s2 user1-addr)]
-      [total-shares-supply <- (total-supply (state-ts s3) addrs)]
+      (deposit s2 user1-addr)))
+
+  (test-case
+    "deposit test"
+    (check-true (or (just? s3) (not (displayln "failed to compute s3"))))
+    (do
+      [s3 <- s3]
       (begin
+        (check-true (pool-invariant s3 addrs))
         (check-equal?
           (pool-reserve-a (state-pool s3))
           (bv 4 w))
@@ -279,49 +288,35 @@
         (check-equal?
           (pool-total-shares (state-pool s3))
           (bv 4 w))
-        (check-true (pool-invariant s3 addrs))))))
+        (check-equal?
+          ((token-balance (state-ts s3)) user1-addr)
+          (bv 2 w)))))
 
-(define (withdraw s to)
-  (define p (state-pool s))
-  (define ta (state-ta s))
-  (define tb (state-tb s))
-  (define ts (state-ts s))
-  (define addr
-    (pool-addr p))
-  (define balance-a
-    ((token-balance ta) addr))
-  (define balance-b
-    ((token-balance tb) addr))
-  (define balance-shares
-    ((token-balance tb) addr))
-  (define out-a
-    (xy/z balance-a balance-shares (pool-total-shares p)))
-  (define out-b
-    (xy/z balance-b balance-shares (pool-total-shares p)))
-  (define new-total-shares
-    (bvsub (pool-total-shares p) balance-shares)) ; NOTE no need for checked-sub here
-  (define new-ts
-    (burn ts addr balance-shares))
-  (define new-ta
-    (transfer ta addr to out-a))
-  (define new-tb
-    (transfer tb addr to out-b))
-  (define new-pool
+  (define s4
     (do
-      [out-a <- out-a]
-      [out-b <- out-b]
-      (just
-        (pool
-          addr
-          (bvsub balance-a out-a) ; NOTE no need for checked sub
-          (bvsub balance-b out-b) ; NOTE no need for checked sub
-          new-total-shares))))
-  (do
-    [new-pool <- new-pool]
-    [new-ts <- new-ts]
-    [new-ta <- new-ta]
-    [new-tb <- new-tb]
-    (just (state new-pool new-ta new-tb new-ts))))
+      [s3 <- s3]
+      ; the user first transfers shares to the pool
+      [ts1 <- (transfer (state-ts s3) user1-addr my-pool-addr (bv 1 w))]
+      (define s4 (state-ts-set s3 ts1))
+      ; then we call withdraw
+      (withdraw s4 user1-addr)))
+
+  (test-case
+    "withdraw test"
+    (check-true (or (just? s4) (not (displayln "failed to compute s4"))))
+    (do
+      [s4 <- s4]
+      (begin
+        (check-true (pool-invariant s4 addrs))
+        (check-equal?
+          (pool-reserve-a (state-pool s4))
+          (bv 3 w))
+        (check-equal?
+          (pool-reserve-b (state-pool s4))
+          (bv 6 w))
+        (check-equal?
+          (pool-total-shares (state-pool s4))
+          (bv 3 w))))))
 
 ; (module+ test
   ; (test-case
