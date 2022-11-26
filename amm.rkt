@@ -9,6 +9,9 @@
 (require
   "checked-ops.rkt"
   rosette/lib/destruct
+  rosette/solver/smt/boolector
+  rosette/solver/smt/cvc4
+  rosette/solver/smt/z3
   struct-update)
 
 (define w 6) ; bit width
@@ -412,22 +415,28 @@
 
   (test-case
     "no money lost (symbolic test)"
-    ; takes 1 minutes with w=6
+    ; takes a long time
     (before
       (clear-vc!)
       (check-true
         (unsat?
-          (verify
-            (do
-              [s1 <- (execute-op* sym-state user1-addr sym-ops)]
-              (assert
-                (and
-                  (bvuge
-                    ((token-balance (state-ta s1)) my-pool-addr)
-                    ((token-balance (state-ta sym-state)) my-pool-addr))
-                  (bvuge
-                    ((token-balance (state-tb s1)) my-pool-addr)
-                    ((token-balance (state-tb sym-state)) my-pool-addr))))))))))
+          (parameterize
+            [(current-solver
+               (z3
+                 ; #:path "/home/nano/Documents/boolector-3.2.0/build/bin/boolector"
+                 #:logic "QF_BV"))]
+            (verify
+              (do
+                [s1 <- (execute-op* sym-state user1-addr sym-ops)]
+                (assert
+                  (and
+                    #;
+                    (bvuge
+                      ((token-balance (state-ta s1)) my-pool-addr)
+                      ((token-balance (state-ta sym-state)) my-pool-addr))
+                    (bvuge
+                      ((token-balance (state-tb s1)) my-pool-addr)
+                      ((token-balance (state-tb sym-state)) my-pool-addr)))))))))))
 
   (test-case
     "invariant preservation; concrete version"
