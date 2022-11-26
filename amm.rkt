@@ -1,35 +1,20 @@
-; #lang errortrace rosette
-; #lang rosette/safe
 #lang rosette
-; #lang racket
-; #lang errortrace racket
-; (require racket/trace)
-
-(require
-  #;(only-in rosette
-           bv
-           bitvector
-           bveq
-           bvudiv
-           bvmul
-           bvadd
-           bvsub
-           zero-extend
-           bvlshr
-           extract
-           bvumin)
-  (only-in rosette/lib/destruct
-           destruct))
 
 ; This is a model of the Soroban liquidity pool.
 ; The goal is exhibit evidence that money cannot be stolen from the pool.
 
+; Checking the "no money lost" property is too slow for a word width of more than 6 bits.
+; TODO what about an inductive invariant?
+
 (require
   "checked-ops.rkt"
+  rosette/lib/destruct
   struct-update)
 
 (define w 6) ; bit width
-(define dw (* 2 w)) ; double the bit width
+(define dw (+ w w)) ; double the bit width
+
+(define debug (make-parameter #f))
 
 ; State of the pool
 ; We have the pool address, reserve amounts and the number of pool shares
@@ -52,7 +37,7 @@
   (define ts (state-ts s))
   (define try-inv
     (do
-      ; failre to compute the total supply (because of overflow) does not count as a failure of the invariant
+      ; failure to compute the total supply (because of overflow) does not count as a failure of the invariant
       [total-supply-a <- (total-supply ta addrs)]
       [total-supply-b <- (total-supply tb addrs)]
       [total-supply-s <- (total-supply ts addrs)]
@@ -62,17 +47,17 @@
             (bveq
               (pool-total-shares (state-pool s))
               (from-just! (total-supply ts addrs)))
-            (not (displayln "total shares not equal to total supply")))
+            (and (debug) (not (displayln "~a total shares not equal to total supply" debug))))
           (or
             (bveq
               (pool-reserve-a (state-pool s))
               ((token-balance ta) (pool-addr (state-pool s))))
-            (not (displayln "reserve of token a not equal to balance")))
+            (and (debug) (not (displayln "reserve of token a not equal to balance"))))
           (or
             (bveq
               (pool-reserve-b (state-pool s))
               ((token-balance tb) (pool-addr (state-pool s))))
-            (not (displayln "reserve of token b not equal to balance")))))))
+            (and (debug) (not (displayln "reserve of token b not equal to balance"))))))))
   (or (nothing? try-inv) (from-just! try-inv)))
 
 (define (burn t addr amount)
@@ -147,6 +132,7 @@
     ((token-balance tb) addr))
   (define total-shares
     (pool-total-shares p))
+  ; TODO a single do block would be prettier
   (define new-total-shares
     (do
       [shares-a <- (xy/z balance-a total-shares (pool-reserve-a p))]
@@ -173,13 +159,11 @@
     (just (state new-pool ta tb new-ts))))
 
 (define (total-supply t addrs)
-  (foldl
-    (λ (a sum)
-       (do
-         [sum <- sum]
-         (checked-add sum ((token-balance t) a))))
-    (just (bv 0 w))
-    addrs))
+  (define (proc a maybe-sum)
+    (do
+      [sum <- maybe-sum]
+      (checked-add sum ((token-balance t) a))))
+  (foldl proc (just (bv 0 w)) addrs))
 
 (define (withdraw s to)
   (define p (state-pool s))
@@ -202,6 +186,7 @@
     (bvsub (pool-total-shares p) balance-shares)) ; NOTE no need for checked-sub here
   (define new-ts
     (burn ts addr balance-shares))
+  ; TODO a single do block would be prettier
   (define new-ta
     (do
       [out-a <- out-a]
@@ -403,7 +388,7 @@
     (withdraw-op s-1))
   (define sym-ops
     ; NOTE it seems that including withdraw slows down z3 a lot
-    (list d-1 w-1 d-2))
+    (list d-1 d-2 w-1))
 
   (test-case
     "invariant preservation (symbolic test)"
@@ -422,7 +407,8 @@
               (do
                 [s1 <- (execute-op* sym-state user1-addr sym-ops)]
                 (assert
-                  (pool-invariant s1 addrs)))))))))
+                  (parameterize ([debug #f])
+                    (pool-invariant s1 addrs))))))))))
 
   (test-case
     "no money lost (symbolic test)"
