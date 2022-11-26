@@ -1,11 +1,11 @@
 ; #lang errortrace rosette
-; #lang rosette
-#lang racket
+#lang rosette
+; #lang racket
 ; #lang errortrace racket
-(require racket/trace)
+; (require racket/trace)
 
 (require
-  (only-in rosette
+  #;(only-in rosette
            bv
            bitvector
            bveq
@@ -16,7 +16,9 @@
            zero-extend
            bvlshr
            extract
-           bvumin))
+           bvumin)
+  (only-in rosette/lib/destruct
+           destruct))
 
 ; This is a model of the Soroban liquidity pool.
 ; The goal is exhibit evidence that money cannot be stolen from the pool.
@@ -42,9 +44,41 @@
 (define (state/kw #:pool p #:token-a ta #:token-b tb #:token-s ts)
   (state p ta tb ts))
 
+(define (pool-invariant s users)
+  (define addrs (cons (pool-addr (state-pool s)) users))
+  (define ta (state-ta s))
+  (define tb (state-tb s))
+  (define ts (state-ts s))
+  (and
+    (or
+      (just? (total-supply ta addrs))
+      (not (displayln "total token-a supply overflow")))
+    (or
+      (just? (total-supply tb addrs))
+      (not (displayln "total token-b supply overflow")))
+    (or
+      (just? (total-supply ts addrs))
+      (not "total shares supply overflow"))
+    (or
+      (bveq
+        (pool-total-shares (state-pool s))
+        (from-just! (total-supply ts addrs)))
+      (not (displayln "total shares not equal to total supply")))
+    (or
+      (bveq
+        (pool-reserve-a (state-pool s))
+        ((token-balance ta) (pool-addr (state-pool s))))
+      (not (displayln "reserve of token a not equal to balance")))
+    (or
+      (bveq
+        (pool-reserve-b (state-pool s))
+        ((token-balance tb) (pool-addr (state-pool s))))
+      (not (displayln "reserve of token b not equal to balance")))))
+
+
 (define (burn t addr amount)
   (do
-    [new-amount <- (trace-call 'checked-sub checked-sub ((token-balance t) addr) amount)]
+    [new-amount <- (checked-sub ((token-balance t) addr) amount)]
     (just
       (token
         (λ (a)
@@ -139,43 +173,13 @@
     (just (state new-pool ta tb new-ts))))
 
 (define (total-supply t addrs)
-  (for/fold
-    ([sum (just (bv 0 w))])
-    ([a addrs])
-    (do
-      [sum <- sum]
-      (checked-add sum ((token-balance t) a)))))
-
-(define (pool-invariant s users)
-  (define addrs (cons (pool-addr (state-pool s)) users))
-  (define ta (state-ta s))
-  (define tb (state-tb s))
-  (define ts (state-ts s))
-  (and
-    (or
-      (just? (total-supply ta addrs))
-      (not (displayln "total token-a supply overflow")))
-    (or
-      (just? (total-supply tb addrs))
-      (not (displayln "total token-b supply overflow")))
-    (or
-      (just? (total-supply ts addrs))
-      (not "total shares supply overflow"))
-    (or
-      (bveq
-        (pool-total-shares (state-pool s))
-        (from-just! (total-supply ts addrs)))
-      (not (displayln "total shares not equal to total supply")))
-    (or
-      (bveq
-        (pool-reserve-a (state-pool s))
-        ((token-balance ta) (pool-addr (state-pool s))))
-      (not (displayln "reserve of token a not equal to balance")))
-    (or
-      (bveq
-        (pool-reserve-b (state-pool s))
-        ((token-balance tb) (pool-addr (state-pool s))))
-      (not (displayln "reserve of token b not equal to balance")))))
+  (foldl
+    (λ (a sum)
+       (do
+         [sum <- sum]
+         (checked-add sum ((token-balance t) a))))
+    (just (bv 0 w))
+    addrs))
 
 (define (withdraw s to)
   (define p (state-pool s))
@@ -191,21 +195,21 @@
   (define balance-shares
     ((token-balance ts) addr))
   (define out-a
-    (trace-call 'xy/z xy/z balance-a balance-shares (pool-total-shares p)))
+    (xy/z balance-a balance-shares (pool-total-shares p)))
   (define out-b
-    (trace-call 'xy/z xy/z balance-b balance-shares (pool-total-shares p)))
+    (xy/z balance-b balance-shares (pool-total-shares p)))
   (define new-total-shares
     (bvsub (pool-total-shares p) balance-shares)) ; NOTE no need for checked-sub here
   (define new-ts
-    (trace-call 'burn burn ts addr balance-shares))
+    (burn ts addr balance-shares))
   (define new-ta
     (do
       [out-a <- out-a]
-      (trace-call 'transfer transfer ta addr to out-a)))
+      (transfer ta addr to out-a)))
   (define new-tb
     (do
       [out-b <- out-b]
-      (trace-call 'transfer transfer tb addr to out-b)))
+      (transfer tb addr to out-b)))
   (define new-pool
     (do
       [out-a <- out-a]
@@ -318,18 +322,56 @@
           (pool-total-shares (state-pool s4))
           (bv 3 w))))))
 
+(struct deposit-op (amount-a amount-b))
+(struct withdraw-op (amount))
+(define (execute-op s user op)
+  (destruct op
+    [(deposit-op a b)
+     (do
+       [ta <- (transfer (state-ta s) user (pool-addr (state-pool s)) a)]
+       [tb <- (transfer (state-tb s) user (pool-addr (state-pool s)) b)]
+       (define s1 (state-tb-set (state-ta-set s ta) tb))
+       (deposit s1 user))]
+    [(withdraw-op shares)
+     (do
+       [ts <- (transfer (state-ts s) user (pool-addr (state-pool s)) shares)]
+       (define s1 (state-ts-set s ts))
+       (withdraw s1 user))]))
+(define (execute-op* s user ops)
+  (foldl
+    (λ (op maybe-s)
+       (do
+         [s <- maybe-s]
+         (execute-op s user op)))
+    (just s) ; init
+    ops))
+
+(module+ test
+  (define ops
+    (list
+      (deposit-op (bv 2 w) (bv 4 w))
+      (withdraw-op (bv 1 w))))
+  (test-case
+    "execute-op* test"
+    (define s1
+      (execute-op* s0 user1-addr ops))
+    (do
+      [s1 <- s1]
+      (check-true (pool-invariant s1 addrs)))))
+
+
 ; (module+ test
-  ; (test-case
-    ; "withdraw tests"
-    ; ; TODO
-    ; (define my-pool
-      ; (amm (bv 1 w) (bv 4 w) (bv 2 w)))
-    ; (check-equal?
-      ; (withdraw my-pool (bv 1 w))
-      ; (just (amm (bv 1 w) (bv 2 w) (bv 1 w))))
-    ; (check-equal?
-      ; (withdraw my-pool (bv -1 w))
-      ; nothing)))
+; (test-case
+; "withdraw tests"
+; ; TODO
+; (define my-pool
+; (amm (bv 1 w) (bv 4 w) (bv 2 w)))
+; (check-equal?
+; (withdraw my-pool (bv 1 w))
+; (just (amm (bv 1 w) (bv 2 w) (bv 1 w))))
+; (check-equal?
+; (withdraw my-pool (bv -1 w))
+; nothing)))
 
 ; ; TODO sequence of deposit and withdraws, not just deposits
 ; (define (deposit* p xys)
