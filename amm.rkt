@@ -14,7 +14,7 @@
   rosette/solver/smt/z3
   struct-update)
 
-(define w 6) ; bit width
+(define w 5) ; bit width
 (define dw (+ w w)) ; double the bit width
 
 (define debug (make-parameter #f))
@@ -135,29 +135,19 @@
     ((token-balance tb) addr))
   (define total-shares
     (pool-total-shares p))
-  ; TODO a single do block would be prettier
-  (define new-total-shares
-    (do
-      [shares-a <- (xy/z balance-a total-shares (pool-reserve-a p))]
-      [shares-b <- (xy/z balance-b total-shares (pool-reserve-b p))]
-      (just
-        (bvumin shares-a shares-b))))
-  (define new-pool
-    (do
-      [new-total-shares <- new-total-shares]
-      (just
-        (pool
-          addr
-          balance-a
-          balance-b
-          new-total-shares))))
-  (define shares-to-mint
-    (do
-      [new-total-shares <- new-total-shares]
-      (just (bvsub new-total-shares total-shares)))) ; NOTE there's no need for checked-sub here
   (do
-    [new-pool <- new-pool]
-    [shares-to-mint <- shares-to-mint]
+    [shares-a <- (xy/z balance-a total-shares (pool-reserve-a p))]
+    [shares-b <- (xy/z balance-b total-shares (pool-reserve-b p))]
+    (define new-total-shares
+      (bvumin shares-a shares-b))
+    (define new-pool
+      (pool
+        addr
+        balance-a
+        balance-b
+        new-total-shares))
+    (define shares-to-mint
+      (bvsub new-total-shares total-shares))
     [new-ts <- (mint ts from shares-to-mint)]
     (just (state new-pool ta tb new-ts))))
 
@@ -181,38 +171,20 @@
     ((token-balance tb) addr))
   (define balance-shares
     ((token-balance ts) addr))
-  (define out-a
-    (xy/z balance-a balance-shares (pool-total-shares p)))
-  (define out-b
-    (xy/z balance-b balance-shares (pool-total-shares p)))
   (define new-total-shares
     (bvsub (pool-total-shares p) balance-shares)) ; NOTE no need for checked-sub here
-  (define new-ts
-    (burn ts addr balance-shares))
-  ; TODO a single do block would be prettier
-  (define new-ta
-    (do
-      [out-a <- out-a]
-      (transfer ta addr to out-a)))
-  (define new-tb
-    (do
-      [out-b <- out-b]
-      (transfer tb addr to out-b)))
-  (define new-pool
-    (do
-      [out-a <- out-a]
-      [out-b <- out-b]
-      (just
-        (pool
-          addr
-          (bvsub balance-a out-a) ; NOTE no need for checked sub
-          (bvsub balance-b out-b) ; NOTE no need for checked sub
-          new-total-shares))))
   (do
-    [new-pool <- new-pool]
-    [new-ts <- new-ts]
-    [new-ta <- new-ta]
-    [new-tb <- new-tb]
+    [out-a <- (xy/z balance-a balance-shares (pool-total-shares p))]
+    [out-b <- (xy/z balance-b balance-shares (pool-total-shares p))]
+    [new-ta <- (transfer ta addr to out-a)]
+    [new-tb <- (transfer tb addr to out-b)]
+    [new-ts <- (burn ts addr balance-shares)]
+    (define new-pool
+      (pool
+        addr
+        (bvsub balance-a out-a) ; NOTE no need for checked sub
+        (bvsub balance-b out-b) ; NOTE no need for checked sub
+        new-total-shares))
     (just (state new-pool new-ta new-tb new-ts))))
 
 (module+ test
@@ -422,15 +394,14 @@
         (unsat?
           (parameterize
             [(current-solver
-               (z3
-                 ; #:path "/home/nano/Documents/boolector-3.2.0/build/bin/boolector"
+               (boolector
+                 #:path "/home/nano/Documents/boolector-3.2.0/build/bin/boolector"
                  #:logic "QF_BV"))]
             (verify
               (do
                 [s1 <- (execute-op* sym-state user1-addr sym-ops)]
                 (assert
                   (and
-                    #;
                     (bvuge
                       ((token-balance (state-ta s1)) my-pool-addr)
                       ((token-balance (state-ta sym-state)) my-pool-addr))
