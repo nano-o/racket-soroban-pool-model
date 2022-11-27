@@ -53,30 +53,27 @@
   (define ta (state-ta s))
   (define tb (state-tb s))
   (define ts (state-ts s))
-  (define try-inv
-    (do
-      ; failure to compute the total supply (because of overflow) does not count as a failure of the invariant
-      [total-supply-a <- (total-supply ta addrs)]
-      [total-supply-b <- (total-supply tb addrs)]
-      [total-supply-s <- (total-supply ts addrs)]
-      (just
-        (and
-          (or
-            (bveq
-              (pool-total-shares (state-pool s))
-              (from-just! (total-supply ts addrs)))
-            (and (debug) (not (displayln "~a total shares not equal to total supply" debug))))
-          (or
-            (bveq
-              (pool-reserve-a (state-pool s))
-              ((token-balance ta) (pool-addr (state-pool s))))
-            (and (debug) (not (displayln "reserve of token a not equal to balance"))))
-          (or
-            (bveq
-              (pool-reserve-b (state-pool s))
-              ((token-balance tb) (pool-addr (state-pool s))))
-            (and (debug) (not (displayln "reserve of token b not equal to balance"))))))))
-  (or (nothing? try-inv) (from-just! try-inv)))
+  (define maybe-total-supply-s (total-supply ts addrs))
+  (and
+    (bvugt (pool-reserve-a (state-pool s)) (bv 0 (w)))
+    (bvugt (pool-reserve-b (state-pool s)) (bv 0 (w)))
+    (bvugt (pool-total-shares (state-pool s)) (bv 0 (w)))
+    (just? maybe-total-supply-s)
+    (or
+      (bveq
+        (pool-total-shares (state-pool s))
+        (from-just! maybe-total-supply-s))
+      (and (debug) (not (displayln "~a total shares not equal to total supply" debug))))
+    (or
+      (bveq
+        (pool-reserve-a (state-pool s))
+        ((token-balance ta) (pool-addr (state-pool s))))
+      (and (debug) (not (displayln "reserve of token a not equal to balance"))))
+    (or
+      (bveq
+        (pool-reserve-b (state-pool s))
+        ((token-balance tb) (pool-addr (state-pool s))))
+      (and (debug) (not (displayln "reserve of token b not equal to balance"))))))
 
 (define (burn t addr amount)
   (do
@@ -239,12 +236,14 @@
   (define user-2
     (bv 2 (w)))
 
-  (define (make-initial-state
+  (define (make-test-state-0
             #:reserve-a ra
             #:reserve-b rb
             #:total-shares ts
             #:user-1-a u1a
             #:user-1-b u1b)
+    ; user-2 has all the liquidity in the pool but has no other tokens
+    ; user-1 starts with u1a of token a and u1b of token b
     (state/kw
       #:pool
       (pool/kw
@@ -270,19 +269,71 @@
       ; existing liquidity is owned by user-2
       #:token-s (token (λ (addr) (if (equal? addr user-2) ts (bv 0 (w)))))))
 
-  (define s0
-    (make-initial-state
+  (define (make-test-state-1
+            #:reserve-a ra
+            #:reserve-b rb
+            #:user-2-s u2s
+            #:user-1-a u1a
+            #:user-1-b u1b
+            #:user-1-s u1s)
+    ; both user-1 and user-2 may own pool shares
+    ; user-1 starts with u1a of token a and u1b of token b
+    ; user-2 has no token a or b
+    (state/kw
+      #:pool
+      (pool/kw
+        #:addr my-pool-addr
+        #:reserve-a ra
+        #:reserve-b rb
+        #:total-shares (bvadd u1s u2s)) ; NOTE this can overflow
+      ; user-1 has 2 of each token a and b
+      #:token-a
+      (token
+        (λ (addr)
+           (cond
+             [(equal? addr user-1) u1a]
+             [(equal? addr my-pool-addr) ra]
+             [else (bv 0 (w))])))
+      #:token-b
+      (token
+        (λ (addr)
+           (cond
+             [(equal? addr user-1) u1b]
+             [(equal? addr my-pool-addr) rb]
+             [else (bv 0 (w))])))
+      ; existing liquidity is owned by user-2
+      #:token-s
+      (token
+        (λ (addr)
+           (cond
+             [(equal? addr user-2) u2s]
+             [(equal? addr user-1) u1s]
+             [else (bv 0 (w))])))))
+
+  (define test-state-0
+    (make-test-state-0
       #:reserve-a (bv 1 (w))
       #:reserve-b (bv 2 (w))
       #:total-shares (bv 1 (w))
       #:user-1-a (bv 2 (w))
       #:user-1-b (bv 2 (w))))
 
+  (define test-state-1
+    (make-test-state-1
+      #:reserve-a (bv 1 (w))
+      #:reserve-b (bv 2 (w))
+      #:user-1-s (bv 1 (w))
+      #:user-2-s (bv 1 (w))
+      #:user-1-a (bv 2 (w))
+      #:user-1-b (bv 2 (w))))
+
   (define users (list user-1 user-2))
 
   (test-case
-    "s0 satisfies the pool invariant"
-    (check-true (pool-invariant s0 users)))
+    "test-state-0 and test-state-1 satisfy the pool invariant"
+    (and
+      (check-true (pool-invariant test-state-0 users))
+      (check-true (pool-invariant test-state-1 users))))
 
   (test-case
     "basic operation-execution scenario"
@@ -291,13 +342,23 @@
         (deposit-op user-1 (bv 2 (w)) (bv 2 (w)))
         (withdraw-op user-1 (bv 1 (w)))))
     (do
-      [s1 <- (execute-op* s0 ops)]
+      [s1 <- (execute-op* test-state-0 ops)]
       (begin
         (check-equal? ((token-balance (state-ts s1)) user-1) (bv 0 (w)))
         (check-equal? ((token-balance (state-ta s1)) user-1) (bv 1 (w)))
         (check-equal? ((token-balance (state-tb s1)) user-1) (bv 2 (w)))
         (check-equal? ((token-balance (state-ta s1)) my-pool-addr) (bv 2 (w)))
         (check-equal? (pool-total-shares (state-pool s1)) (bv 1 (w)))
+        (check-equal? ((token-balance (state-ts s1)) user-2) (bv 1 (w)))
+        (check-true (pool-invariant s1 users))))
+    (do
+      [s1 <- (execute-op* test-state-1 ops)]
+      (begin
+        (check-equal? ((token-balance (state-ts s1)) user-1) (bv 2 (w)))
+        (check-equal? ((token-balance (state-ta s1)) user-1) (bv 0 (w)))
+        (check-equal? ((token-balance (state-tb s1)) user-1) (bv 1 (w)))
+        (check-equal? ((token-balance (state-ta s1)) my-pool-addr) (bv 3 (w)))
+        (check-equal? (pool-total-shares (state-pool s1)) (bv 3 (w)))
         (check-equal? ((token-balance (state-ts s1)) user-2) (bv 1 (w)))
         (check-true (pool-invariant s1 users)))))
 
@@ -308,20 +369,19 @@
       (deposit-op user-1 a-2 b-2)
       (withdraw-op user-1 s-1)))
 
-  #;
   (test-case
-    "invariant preservation (symbolic test)"
+    "invariant preservation after deposit, deposit, then withdraw (symbolic test)"
     (before
       (clear-vc!)
       (parameterize
-        [(w 64)
+        [(w 2)
          (debug #f)
          (current-solver
            (boolector
              #:logic "QF_BV"))]
         (define-symbolic ra rb ts u1a u1b (bitvector (w)))
         (define sym-state
-          (make-initial-state
+          (make-test-state-0
             #:reserve-a ra
             #:reserve-b rb
             #:total-shares ts
@@ -342,40 +402,18 @@
         (check-true
           (unsat? result)))))
 
-  #;
   (test-case
-    "debugging"
-    (parameterize
-      [(w 18)]
-      (define conc-state
-        (make-initial-state
-          #:reserve-a (bv #b01010101010101010 (w))
-          #:reserve-b (bv #b01010101010101010 (w))
-          #:total-shares (bv #b00000000000000000 (w))
-          #:user-1-a (bv #b10101010101010100 (w))
-          #:user-1-b (bv #b10101010101010100 (w))))
-      (define conc-ops
-        (make-d-d-w
-          (bv #b01010101010101010 (w))
-          (bv #b01010101010101010 (w))
-          (bv #b00000000000000000 (w))
-          (bv #b00000000000000000 (w))
-          (bv #b00000000000000000 (w))))
-      (execute-op* conc-state conc-ops)))
-
-  #;
-  (test-case
-    "no money lost (symbolic test)"
+    "no money lost after deposit, deposit, then withdraw (symbolic test)"
     (before
       (clear-vc!)
       (parameterize
-        [(w 4) ; this test takes too long for more than 4 bits...
+        [(w 2) ; this test takes too long for more than 4 bits...
          (current-solver
            (boolector
              #:logic "QF_BV"))]
         (define-symbolic ra rb ts u1a u1b (bitvector (w)))
         (define sym-state
-          (make-initial-state
+          (make-test-state-0
             #:reserve-a ra
             #:reserve-b rb
             #:total-shares ts
@@ -403,68 +441,60 @@
     (define my-pool-addr (pool-addr (state-pool s-0)))
     (define user-1-shares
       ((token-balance (state-ts s)) user-1))
-    (do
-      [user-1-max-out-a <- (xy/z user-1-shares (pool-reserve-a (state-pool s)) (pool-total-shares (state-pool s)))]
-      [user-1-max-out-b <- (xy/z user-1-shares (pool-reserve-b (state-pool s)) (pool-total-shares (state-pool s)))]
-      (just
-        (and
-          ; the liquidity held by user-1 must not be enough to drain the pool below its initial reserves
-          #;
-          (bvugt
-            (pool-reserve-a (state-pool s))
-            user-1-max-out-a)
-          #;
-          (bvuge
-            (bvsub (pool-reserve-a (state-pool s)) user-1-max-out-a)
-            (pool-reserve-a (state-pool s-0)))
-          #;
-          (bvugt
-            (pool-reserve-b (state-pool s))
-            user-1-max-out-b)
-          #;
-          (bvuge
-            (bvsub (pool-reserve-b (state-pool s)) user-1-max-out-b)
-            (pool-reserve-b (state-pool s-0)))
-          ; and the pool has at least as much reserves as initially
-          (bvuge
-            (pool-reserve-a (state-pool s))
-            (pool-reserve-a (state-pool s-0)))
-          (bvuge
-            (pool-reserve-b (state-pool s))
-            (pool-reserve-b (state-pool s-0)))
-          ; and the previous invariant must hold
-          #;
-          (pool-invariant s users)))))
+    (define maybe-user-1-max-out-a
+      (xy/z user-1-shares (pool-reserve-a (state-pool s)) (pool-total-shares (state-pool s))))
+    (define maybe-user-1-max-out-b
+      (xy/z user-1-shares (pool-reserve-b (state-pool s)) (pool-total-shares (state-pool s))))
+    (and
+      (pool-invariant s users)
+      (just? maybe-user-1-max-out-a)
+      (just? maybe-user-1-max-out-b)
+      ; the liquidity held by user-1 must not be enough to drain the pool below its initial reserves
+      (bvuge
+        (bvsub (pool-reserve-a (state-pool s)) (from-just! maybe-user-1-max-out-a))
+        (pool-reserve-a (state-pool s-0)))
+      (bvuge
+        (bvsub (pool-reserve-b (state-pool s)) (from-just! maybe-user-1-max-out-b))
+        (pool-reserve-b (state-pool s-0)))
+      ; and the pool has at least as much reserves as initially
+      (bvuge
+        (pool-reserve-a (state-pool s))
+        (pool-reserve-a (state-pool s-0)))
+      (bvuge
+        (pool-reserve-b (state-pool s))
+        (pool-reserve-b (state-pool s-0)))))
 
   (test-case
-    "invariant (symbolic test)"
+    "inductiveness (symbolic test)"
     (before
       (clear-vc!)
       (parameterize
-        [(w 4)
+        [(w 3)
          (current-solver
-           (boolector
+           (z3
              #:logic "QF_BV"))]
-        (define-symbolic ra-0 rb-0 ts-0 u1a-0 u1b-0 (bitvector (w)))
+
+        (define-symbolic ra-0 rb-0 u1a-0 u1b-0 u1s-0 u2s-0 (bitvector (w)))
         (define s-0
-          (make-initial-state
+          (make-test-state-1
             #:reserve-a ra-0
             #:reserve-b rb-0
-            #:total-shares ts-0
+            #:user-1-s u1s-0
+            #:user-2-s u2s-0
             #:user-1-a u1a-0
             #:user-1-b u1b-0))
-        (define-symbolic ra-1 rb-1 ts-1 u1a-1 u1b-1 (bitvector (w)))
+        (define-symbolic ra-1 rb-1 u1a-1 u1b-1 u1s-1 u2s-1 (bitvector (w)))
         (define s-1
-          (make-initial-state
+          (make-test-state-1
             #:reserve-a ra-1
             #:reserve-b rb-1
-            #:total-shares ts-1
+            #:user-1-s u1s-1
+            #:user-2-s u2s-1
             #:user-1-a u1a-1
             #:user-1-b u1b-1))
         (define-symbolic a b s (bitvector (w)))
 
         ; check that deposit preserves the invariant:
-        #;
         (check-true
           (before
             (clear-vc!)
@@ -474,28 +504,26 @@
                   (assume
                     (and
                       (pool-invariant s-0 users)
-                      (let [(try-inv (ind-invariant s-0 s-1))]
-                        (and (just? try-inv) (from-just! try-inv)))))
+                      (ind-invariant s-0 s-1)))
                   (do
                     [s-2 <- (execute-op s-1 (deposit-op user-1 a b))]
                     (assert
-                      (let [(try-inv (ind-invariant s-0 s-2))]
-                        (or (nothing? try-inv) (from-just! try-inv))))))))))
+                      (ind-invariant s-0 s-2))))))))
 
         ; check that withdraw preserves the invariant:
         (check-true
           (before
             (clear-vc!)
-            (unsat?
+            (define result
               (verify
                 (begin
                   (assume
                     (and
                       (pool-invariant s-0 users)
-                      (let [(try-inv (ind-invariant s-0 s-1))]
-                        (and (just? try-inv) (from-just! try-inv)))))
+                      (ind-invariant s-0 s-1)))
                   (do
                     [s-2 <- (execute-op s-1 (withdraw-op user-1 s))]
                     (assert
-                      (let [(try-inv (ind-invariant s-0 s-2))]
-                        (or (nothing? try-inv) (from-just! try-inv))))))))))))))
+                      (ind-invariant s-0 s-2))))))
+            (displayln result)
+            (unsat? result)))))))
