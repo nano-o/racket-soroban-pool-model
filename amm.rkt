@@ -14,8 +14,8 @@
   rosette/solver/smt/z3
   struct-update)
 
-(define w 6) ; bit width
-(define dw (+ w w)) ; double the bit width
+(define w (make-parameter 8)) ; bit width
+(define (dw) (+ (w) (w))) ; double the bit width; has to be a function in order to depend on the dynamic value of the parameter w
 
 (define debug (make-parameter #f))
 
@@ -110,17 +110,17 @@
   (define res
     (bvudiv
       (bvmul
-        (zero-extend x (bitvector dw))
-        (zero-extend y (bitvector dw)))
-      (zero-extend z (bitvector dw))))
+        (zero-extend x (bitvector (dw)))
+        (zero-extend y (bitvector (dw))))
+      (zero-extend z (bitvector (dw)))))
   (cond
     [(not ; doesn't fit in a word
        (bveq
-         (bvlshr res (bv w dw))
-         (bv 0 dw)))
+         (bvlshr res (bv (w) (dw)))
+         (bv 0 (dw))))
      nothing]
     [else
-      (just (extract (- w 1) 0 res))]))
+      (just (extract (- (w) 1) 0 res))]))
 
 (define (deposit s from)
   (define p (state-pool s))
@@ -156,7 +156,7 @@
     (do
       [sum <- maybe-sum]
       (checked-add sum ((token-balance t) a))))
-  (foldl proc (just (bv 0 w)) addrs))
+  (foldl proc (just (bv 0 (w))) addrs))
 
 (define (withdraw s to)
   (define p (state-pool s))
@@ -218,11 +218,11 @@
 
   ; we will run tests with two users user-1 and user-2
   (define my-pool-addr ; pool has address 0
-    (bv 0 w))
+    (bv 0 (w)))
   (define user-1-addr
-    (bv 1 w))
+    (bv 1 (w)))
   (define user-2-addr
-    (bv 2 w))
+    (bv 2 (w)))
 
   (define (make-initial-state
             #:reserve-a ra
@@ -244,24 +244,24 @@
            (cond
              [(equal? addr user-1-addr) u1a]
              [(equal? addr my-pool-addr) ra]
-             [else (bv 0 w)])))
+             [else (bv 0 (w))])))
       #:token-b
       (token
         (λ (addr)
            (cond
              [(equal? addr user-1-addr) u1b]
              [(equal? addr my-pool-addr) rb]
-             [else (bv 0 w)])))
+             [else (bv 0 (w))])))
       ; existing liquidity is owned by user-2
-      #:token-s (token (λ (addr) (if (equal? addr user-2-addr) ts (bv 0 w))))))
+      #:token-s (token (λ (addr) (if (equal? addr user-2-addr) ts (bv 0 (w)))))))
 
   (define s0
     (make-initial-state
-      #:reserve-a (bv 1 w)
-      #:reserve-b (bv 2 w)
-      #:total-shares (bv 1 w)
-      #:user-1-a (bv 2 w)
-      #:user-1-b (bv 2 w)))
+      #:reserve-a (bv 1 (w))
+      #:reserve-b (bv 2 (w))
+      #:total-shares (bv 1 (w))
+      #:user-1-a (bv 2 (w))
+      #:user-1-b (bv 2 (w))))
 
   (define addrs (list my-pool-addr user-1-addr user-2-addr))
 
@@ -273,75 +273,81 @@
     "basic operation-execution scenario"
     (define ops
       (list
-        (deposit-op user-1-addr (bv 2 w) (bv 2 w))
-        (withdraw-op user-1-addr (bv 1 w))))
+        (deposit-op user-1-addr (bv 2 (w)) (bv 2 (w)))
+        (withdraw-op user-1-addr (bv 1 (w)))))
     (do
       [s1 <- (execute-op* s0 ops)]
       (begin
-        (check-equal? ((token-balance (state-ts s1)) user-1-addr) (bv 0 w))
-        (check-equal? ((token-balance (state-ta s1)) user-1-addr) (bv 1 w))
-        (check-equal? ((token-balance (state-tb s1)) user-1-addr) (bv 2 w))
-        (check-equal? ((token-balance (state-ta s1)) my-pool-addr) (bv 2 w))
-        (check-equal? (pool-total-shares (state-pool s1)) (bv 1 w))
-        (check-equal? ((token-balance (state-ts s1)) user-2-addr) (bv 1 w))
+        (check-equal? ((token-balance (state-ts s1)) user-1-addr) (bv 0 (w)))
+        (check-equal? ((token-balance (state-ta s1)) user-1-addr) (bv 1 (w)))
+        (check-equal? ((token-balance (state-tb s1)) user-1-addr) (bv 2 (w)))
+        (check-equal? ((token-balance (state-ta s1)) my-pool-addr) (bv 2 (w)))
+        (check-equal? (pool-total-shares (state-pool s1)) (bv 1 (w)))
+        (check-equal? ((token-balance (state-ts s1)) user-2-addr) (bv 1 (w)))
         (check-true (pool-invariant s1 addrs)))))
 
-
-  ; now the symbolic tests
-
-
-  ; symbolic state:
-  (define-symbolic ra rb ts u1a u1b (bitvector w))
-  (define sym-state
-    (make-initial-state
-      #:reserve-a ra
-      #:reserve-b rb
-      #:total-shares ts
-      #:user-1-a u1a
-      #:user-1-b u1b))
-
-  ; symbolic operations:
-  (define-symbolic a-1 b-1 a-2 b-2 s-1 (bitvector w))
-  (define d-1
-    (deposit-op user-1-addr a-1 b-1))
-  (define d-2
-    (deposit-op user-1-addr a-2 b-2))
-  (define w-1
-    (withdraw-op user-1-addr s-1))
-  (define sym-ops
-    ; two deposits and a withdraw
-    (list d-1 d-2 w-1))
+  ; deposit, deposit, and withdraw:
+  (define (make-d-d-w a-1 b-1 a-2 b-2 s-1)
+    (list
+      (deposit-op user-1-addr a-1 b-1)
+      (deposit-op user-1-addr a-2 b-2)
+      (withdraw-op user-1-addr s-1)))
 
   (test-case
     "invariant preservation (symbolic test)"
     (before
       (clear-vc!)
-      (check-true
-        (unsat?
+      (parameterize
+        [(w 64)
+         (debug #f)
+         (current-solver
+           (boolector
+             #:logic "QF_BV"))]
+        (define-symbolic ra rb ts u1a u1b (bitvector (w)))
+        (define sym-state
+          (make-initial-state
+            #:reserve-a ra
+            #:reserve-b rb
+            #:total-shares ts
+            #:user-1-a u1a
+            #:user-1-b u1b))
+        (define-symbolic a-1 b-1 a-2 b-2 s-1 (bitvector (w)))
+        (define sym-ops
+          (make-d-d-w a-1 b-1 a-2 b-2 s-1))
+        (define result
           (verify
-            (begin
-              #; ; does not seem to help
-              (assume
-                (and
-                  (bvugt ((token-balance (state-ta sym-state)) my-pool-addr) (bv 0 w))
-                  (bvugt ((token-balance (state-tb sym-state)) my-pool-addr) (bv 0 w))
-                  (bvugt (pool-total-shares (state-pool sym-state)) (bv 0 w))))
-              (do
-                [s1 <- (execute-op* sym-state sym-ops)]
-                (assert
-                  (parameterize ([debug #f])
-                    (pool-invariant s1 addrs))))))))))
+            (do
+              [s1 <- (execute-op* sym-state sym-ops)]
+              (assert
+                (pool-invariant s1 addrs)))))
+        #;
+        (displayln
+          (pretty-format (model (complete-solution result (list ra rb ts u1a u1b a-1 b-1 a-2 b-2 s-1)))))
+        (check-true
+          (unsat? result)))))
 
   (test-case
     "no money lost (symbolic test)"
     (before
       (clear-vc!)
-      (check-true
-        (unsat?
-          (parameterize
-            [(current-solver
-               (boolector
-                 #:logic "QF_BV"))]
+      (parameterize
+        [(w 4) ; this test takes too long for more than 4 bits...
+         (current-solver
+           (boolector
+             #:logic "QF_BV"))]
+        (define-symbolic ra rb ts u1a u1b (bitvector (w)))
+        (define sym-state
+          (make-initial-state
+            #:reserve-a ra
+            #:reserve-b rb
+            #:total-shares ts
+            #:user-1-a u1a
+            #:user-1-b u1b))
+        (define-symbolic a-1 b-1 a-2 b-2 s-1 (bitvector (w)))
+        (define sym-ops
+          (make-d-d-w a-1 b-1 a-2 b-2 s-1))
+        (check-true
+          (unsat?
             (verify
               (do
                 [s1 <- (execute-op* sym-state sym-ops)]
