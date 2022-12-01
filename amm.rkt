@@ -6,6 +6,8 @@
 ; Checking the "no money lost" property is too slow for a word width of more than 6 bits.
 ; TODO try an mathematical-interger version? The idea would be that, once we prove there are no overflow, we can lift everything to integers.
 
+; test with `raco test amm.rkt`
+
 (require
   "checked-ops.rkt"
   rosette/lib/destruct
@@ -362,7 +364,7 @@
         [(w 2)
          (debug #f)
          (current-solver
-           (boolector
+           (z3
              #:logic "QF_BV"))]
         (define-symbolic ra rb ts u1a u1b (bitvector (w)))
         (define sym-state
@@ -394,7 +396,7 @@
       (parameterize
         [(w 2) ; this test takes too long for more than 4 bits...
          (current-solver
-           (boolector
+           (z3
              #:logic "QF_BV"))]
         (define-symbolic ra rb ts u1a u1b (bitvector (w)))
         (define sym-state
