@@ -1,25 +1,10 @@
 #lang rosette
-; #lang errortrace racket
 
 ; This is a model of the Soroban liquidity pool.
 ; The goal is exhibit evidence that money cannot be stolen from the pool.
 
 ; Checking the "no money lost" property is too slow for a word width of more than 6 bits.
-; TODO what about an inductive invariant?
-
-; (require
-  ; (only-in rosette
-           ; bv
-           ; bitvector
-           ; bveq
-           ; bvudiv
-           ; bvmul
-           ; bvadd
-           ; bvsub
-           ; zero-extend
-           ; bvlshr
-           ; extract
-           ; bvumin))
+; TODO try an mathematical-interger version? The idea would be that, once we prove there are no overflow, we can lift everything to integers.
 
 (require
   "checked-ops.rkt"
@@ -398,7 +383,7 @@
                 (pool-invariant s1 users)))))
         #;
         (displayln
-          (pretty-format (model (complete-solution result (list ra rb ts u1a u1b a-1 b-1 a-2 b-2 s-1)))))
+          (pretty-format (model result)))
         (check-true
           (unsat? result)))))
 
@@ -525,5 +510,6 @@
                     [s-2 <- (execute-op s-1 (withdraw-op user-1 s))]
                     (assert
                       (ind-invariant s-0 s-2))))))
+            #;
             (displayln result)
             (unsat? result)))))))
