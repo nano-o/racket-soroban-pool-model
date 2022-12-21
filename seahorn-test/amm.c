@@ -1,12 +1,11 @@
 #include "seahorn/seahorn.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
-#include <stdbool.h>
 #include "sys/param.h"
-#include "setjmp.h"
 
 /*
- * Here we want to simulate withdraw and deposit operations in a simple AMM and try verifying some properties with Seahorn.
+ * We implement a simple model of an AMM and try verifying some properties with Seahorn.
  */
 
 // to set something to a non-deterministic value:
@@ -31,13 +30,10 @@ token_t ta;
 token_t tb;
 token_t ts;
 
-// global variable holding an environment to lonjump to on overflow:
-jmp_buf env; // upon overflow we jump env, but we do not undo anything.
-
 uint32_t xy_over_z(uint32_t x, uint32_t y, uint32_t z) {
     uint64_t result = ((uint64_t)x * (uint64_t)y)/((uint64_t) z);
     if ((result>>32) != 0) { // overflow
-        longjmp(env, 1);
+        exit(1);
     }
     else {
         return (uint32_t)result;
@@ -47,20 +43,29 @@ uint32_t xy_over_z(uint32_t x, uint32_t y, uint32_t z) {
 // the deposit function of the pool contract
 void deposit() {
     // the user has already sent funds to the pool (in the token contracts ta and tb)
+    printf("user sent %x token a\n", ta.pool - pool.ra);
+    printf("user sent %x token b\n", tb.pool - pool.rb);
     uint32_t shares_a = xy_over_z(ta.pool, pool.s, pool.ra);
+    printf("shares_a is %x\n", shares_a);
     uint32_t shares_b = xy_over_z(tb.pool, pool.s, pool.rb);
+    printf("shares_b is %x\n", shares_b);
     uint32_t new_total_shares = MIN(shares_a, shares_b);
+    printf("new_total_shares is %x\n", new_total_shares);
     uint32_t new_user_shares = new_total_shares - pool.s;
-    // update pool:
+    printf("new_user_shares is %x\n", new_user_shares);
+    // update pool reserves:
     pool.ra = ta.pool;
     pool.rb = tb.pool;
-    pool.s = new_total_shares;
     // send shares to user:
-    uint32_t total_user_shares = ts.user + new_total_shares;
+    uint32_t shares_to_mint = new_total_shares - pool.s; // no overflow possible
+    printf("shares_to_mint is %x\n", shares_to_mint);
+    uint32_t total_user_shares = ts.user + shares_to_mint;
     if (total_user_shares < ts.user) {
-        longjmp(env, 1); // overflow
+        exit(1); // overflow
     };
     ts.user = total_user_shares;
+    // update total pool shares:
+    pool.s = new_total_shares;
 }
 
 void withdraw() {
@@ -80,33 +85,40 @@ void withdraw() {
 }
 
 int main(void) {
-    int i;
-    i = setjmp(env);
-    if (i == 0) {
-        pool = (pool_t){.ra = nd(), .rb = nd(), .s = nd()};
-        assume (pool.ra > 0);
-        assume (pool.rb > 0);
-        assume (pool.s > 0);
-        ta = (token_t){.pool = nd(), .user = 0}; // we don't care about how much a tokens the user has
-        tb = (token_t){.pool = nd(), .user = 0}; // we don't care about how much b tokens the user has
-        ts = (token_t){.pool = 0, .user = 0};
-        // the user has sent non-zero amounts of each token to the pool:
-        assume (ta.pool > pool.ra);
-        assume (tb.pool > pool.rb);
-        // now call deposit:
-        deposit();
-        // user can still end up with no shares; why? rounding.
-        // sassert(ts.user > 0);
-        // now deposit again:
-        // ta.pool = nd();
-        // tb.pool = nd();
-        // assume (ta.pool > pool.ra);
-        // assume (tb.pool > pool.rb);
-        deposit();
-        // then withdraw some amount of shares held by the user:
-        ts.pool = nd();
-        assume(ts.pool <= ts.user);
-        withdraw();
-        sassert(ta.pool > 0);
-    }
+    pool = (pool_t){.ra = nd(), .rb = nd(), .s = nd()};
+    printf("pool.ra is %x\n", pool.ra);
+    printf("pool.rb is %x\n", pool.rb);
+    printf("pool.s is %x\n", pool.s);
+    assume (pool.ra > 0);
+    assume (pool.rb > 0);
+    assume (pool.s > 0);
+    ta = (token_t){.pool = nd(), .user = 0}; // we don't care about how much a tokens the user has
+    printf("initial ta.pool is %x\n", ta.pool);
+    tb = (token_t){.pool = nd(), .user = 0}; // we don't care about how much b tokens the user has
+    printf("initial tb.pool is %x\n", tb.pool);
+    ts = (token_t){.pool = 0, .user = 0};
+    // the user has sent non-zero amounts of each token to the pool:
+    assume (ta.pool > pool.ra);
+    assume (tb.pool > pool.rb);
+    // now call deposit:
+    deposit();
+    printf("pool.ra is %x\n", pool.ra);
+    printf("pool.rb is %x\n", pool.rb);
+    printf("pool.s is %x\n", pool.s);
+    printf("user has %x shares\n", ts.user);
+    sassert(ts.user <= pool.s);
+    // user can still end up with no shares; why? rounding.
+    // sassert(ts.user > 0);
+    //
+    // now deposit again:
+    // ta.pool = nd();
+    // tb.pool = nd();
+    // assume (ta.pool > pool.ra);
+    // assume (tb.pool > pool.rb);
+    // deposit();
+    // then withdraw some amount of shares held by the user:
+    // ts.pool = nd();
+    // assume(ts.pool <= ts.user);
+    // withdraw();
+    // sassert(ta.pool > 0);
 }
