@@ -5,20 +5,20 @@
 
 (require
   (only-in data/maybe
-    just
-    nothing
-    [just? maybe:just?]
-    [nothing? maybe:nothing?]
-    [from-just maybe:from-just]
-    [from-just! maybe:from-just!])
+           just
+           nothing
+           [just? maybe:just?]
+           [nothing? maybe:nothing?]
+           [from-just maybe:from-just]
+           [from-just! maybe:from-just!])
   (only-in data/monad
-     [chain monad:chain])
+           [chain monad:chain])
   (only-in data/applicative
-     pure)
+           pure)
   (for-syntax racket/base
-                     racket/syntax
-                     syntax/parse))
-; NOTE we can't use do because it expands to code that uses monad:chain
+              racket/syntax
+              syntax/parse))
+; NOTE we can't use do as is because it expands to code that uses monad:chain
 ; see https://stackoverflow.com/questions/57937588/in-racket-can-i-redefine-the-form-if-and-have-other-derived-forms-automatical
 
 (provide

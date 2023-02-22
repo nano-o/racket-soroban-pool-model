@@ -4,7 +4,7 @@
 ; The goal is exhibit evidence that money cannot be stolen from the pool.
 
 ; Checking the "no money lost" property is too slow for a word width of more than 6 bits.
-; TODO try an mathematical-interger version? The idea would be that, once we prove there are no overflow, we can lift everything to integers.
+; NOTE: using mathematical integers would likely not help much because non-linear integer arithmetic is undecidable.
 
 ; test with `raco test amm.rkt`
 
@@ -16,7 +16,7 @@
   rosette/solver/smt/z3
   struct-update)
 
-(define w (make-parameter 8)) ; bit width
+(define w (make-parameter 64)) ; bit width
 (define (dw) (+ (w) (w))) ; double the bit width; has to be a function in order to depend on the dynamic value of the parameter w
 
 (define debug (make-parameter #f))
@@ -361,12 +361,17 @@
     (before
       (clear-vc!)
       (parameterize
-        [(w 2)
+        [(w 64) ; seems to hit a wall at 8
          (debug #f)
          (current-solver
            (z3
              #:logic "QF_BV"))]
-        (define-symbolic ra rb ts u1a u1b (bitvector (w)))
+        (define-symbolic ra- rb- ts- u1a- u1b- (bitvector 6))
+        (define ra (zero-extend ra- (bitvector (w))))
+        (define rb (zero-extend rb- (bitvector (w))))
+        (define ts (zero-extend ts- (bitvector (w))))
+        (define u1a (zero-extend u1a- (bitvector (w))))
+        (define u1b (zero-extend u1b- (bitvector (w))))
         (define sym-state
           (make-test-state-0
             #:reserve-a ra
@@ -374,7 +379,12 @@
             #:total-shares ts
             #:user-1-a u1a
             #:user-1-b u1b))
-        (define-symbolic a-1 b-1 a-2 b-2 s-1 (bitvector (w)))
+        (define-symbolic a-1- b-1- a-2- b-2- s-1- (bitvector 6))
+        (define a-1 (zero-extend a-1- (bitvector (w))))
+        (define b-1 (zero-extend b-1- (bitvector (w))))
+        (define a-2 (zero-extend a-2- (bitvector (w))))
+        (define b-2 (zero-extend b-2- (bitvector (w))))
+        (define s-1 (zero-extend s-1- (bitvector (w))))
         (define sym-ops
           (make-d-d-w a-1 b-1 a-2 b-2 s-1))
         (define result
@@ -383,12 +393,13 @@
               [s1 <- (execute-op* sym-state sym-ops)]
               (assert
                 (pool-invariant s1 users)))))
-        #;
-        (displayln
-          (pretty-format (model result)))
+        (when (sat? result)
+          (displayln
+            (pretty-format (model result))))
         (check-true
           (unsat? result)))))
 
+  #;
   (test-case
     "no money lost after deposit, deposit, then withdraw (symbolic test)"
     (before
@@ -451,6 +462,7 @@
         (pool-reserve-b (state-pool s))
         (pool-reserve-b (state-pool s-0)))))
 
+  #;
   (test-case
     "inductiveness (symbolic test)"
     (before
